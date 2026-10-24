@@ -9,6 +9,7 @@ from google import genai
 from google.genai import types
 
 from .audio import FRAME_MS, MIC_RATE, Mic, Speaker
+from .body import Body
 from .camera import Camera
 from .debug import DebugRecorder
 from .memory import Memory
@@ -30,10 +31,11 @@ class LiveBrain:
         self._speaker = speaker
         self._camera = camera
         self._memory = memory
-        self._tools = Tools(camera, memory)
         v = cfg["vad"]
         self._gate = SpeechGate(v["aggressiveness"], v["preroll_ms"], v["hangover_ms"],
                                 v["min_speech_ms"], v["margin_db"])
+        self._body = Body(cfg, camera, self._gate, memory)
+        self._tools = Tools(camera, memory, self._body)
         self._frame_on_speech = cfg["camera"]["enabled"] and cfg["camera"]["frame_on_speech"]
         d = cfg["debug"]
         self._rec = DebugRecorder(Path(d["dir"]), d["keep"]) if d["enabled"] else None
@@ -126,6 +128,7 @@ class LiveBrain:
                      "devam" if self._handle else "yeni oturum")
             if self._rec and not self._handle:
                 self._rec.session(model, config.system_instruction)
+            self._body.connected_since = time.monotonic()
             if self._handle:
                 # Baglanti konusmanin ortasinda koptuysa sunucu o konusmanin bitmesini
                 # bekleyip takili kaliyor; akisin bittigini hemen bildir
@@ -139,6 +142,7 @@ class LiveBrain:
                     if t.exception():
                         raise t.exception()
             finally:
+                self._body.connected_since = None
                 for t in tasks:
                     t.cancel()
         log.info("baglanti yenileniyor")
@@ -188,7 +192,7 @@ class LiveBrain:
             renew.set()
 
         if msg.tool_call:
-            replies = [self._tools.handle(fc) for fc in msg.tool_call.function_calls or []]
+            replies = [await self._tools.handle(fc) for fc in msg.tool_call.function_calls or []]
             await s.send_tool_response(function_responses=replies)
 
         sc = msg.server_content

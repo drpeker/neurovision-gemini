@@ -12,6 +12,8 @@ Kimseyi yüzünden tanımaya çalışma.
 Hafızan var: kullanıcı kalıcı bir bilgi paylaştığında (isim, tercih, aile, eşyaların yeri,
 alışkanlık) remember ile kaydet. Geçmişle ilgili bir soru gelirse önce aşağıdaki bilgilere bak,
 orada yoksa recall ile ara. "Unut" denirse forget kullan. Hatırlamadığın şeyi uydurma.
+Kendi bedenini hissedebilirsin: ısın, gücün, işlemcin, belleğin, pinlerin, bağlı sensörlerin,
+ortam ışığı ve ses düzeyi için body_status kullan; ölçmeden tahmin yürütme.
 """
 
 [audio]
@@ -58,6 +60,44 @@ summary_model = "gemini-3.5-flash-lite"
 # Yeni oturum acilirken modele verilen bilgi ve ozet sayisi
 facts_in_prompt = 40
 episodes_in_prompt = 5
+
+[body]
+# body_status araci: robotun kendi donanim durumu (yalnizca okur)
+warn_temp_c = 75
+# Taranacak I2C bus'lari; 10/20/21/22 kamera ve HDMI'ya ait, taranmaz
+i2c_buses = [1]
+
+# Sistemin kullandigi pinler: durumu degil gorevi raporlanir
+[body.reserved_pins]
+0 = "HAT EEPROM"
+1 = "HAT EEPROM"
+2 = "I2C SDA"
+3 = "I2C SCL"
+14 = "UART TX"
+15 = "UART RX"
+18 = "I2S BCLK"
+19 = "I2S LRCLK"
+20 = "I2S mikrofon"
+21 = "I2S hoparlör (planlı)"
+
+# Pin planimizdaki gorevler (henuz takili olmayanlar "planlı")
+[body.pin_names]
+12 = "motor ENA (planlı)"
+13 = "motor ENB (planlı)"
+22 = "motor IN4 (planlı)"
+23 = "motor IN1 (planlı)"
+24 = "motor IN2 (planlı)"
+27 = "motor IN3 (planlı)"
+16 = "amfi SD (planlı)"
+8 = "ekran CS (planlı)"
+7 = "dokunmatik CS (planlı)"
+9 = "SPI MISO (planlı)"
+10 = "SPI MOSI (planlı)"
+11 = "SPI SCLK (planlı)"
+25 = "ekran DC (planlı)"
+5 = "ekran RST (planlı)"
+6 = "ekran arka ışık (planlı)"
+17 = "dokunmatik IRQ (planlı)"
 
 [debug]
 # Modele giden son konusmalarin sesi ve oturum talimati; bir hatayi yeniden oynatmak icin

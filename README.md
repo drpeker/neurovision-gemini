@@ -57,8 +57,10 @@ tail -f logs/robot.log                  # canlı log
 | `nv/vad.py` | Yerel konuşma kapısı |
 | `nv/camera.py` | `rpicam-vid` MJPEG → son kare |
 | `nv/live.py` | Gemini Live oturumu, yeniden bağlanma |
-| `nv/tools.py` | Modelin çağırdığı araçlar (`look`, `remember`, `recall`, `forget`) |
-| `nv/memory.py` | SQLite hafıza: belirteç, döküm, özetler, kalıcı bilgiler |
+| `nv/tools.py` | Modelin çağırdığı araçlar (`look`, `remember`, `recall`, `forget`, `body_status`) |
+| `nv/body.py` | Öz farkındalık (`body_status`): güç, ısı, CPU, RAM, disk, wifi, GPIO, I²C, ışık, ses, alt sistemler. Yalnızca okur |
+| `nv/debug.py` | Teşhis: son 10 konuşmanın sesi ve oturum talimatı (`logs/debug/`) |
+| `nv/memory.py` | SQLite hafıza: döküm, özetler, kalıcı bilgiler |
 | `nv/summarizer.py` | Sessizlikte özet + otomatik bilgi çıkarma |
 
 Yeni araç eklemek için `nv/tools.py` içindeki `DECLARATIONS` listesine bir tanım, `handle()` fonksiyonuna da bir dal ekle.

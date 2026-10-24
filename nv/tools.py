@@ -8,6 +8,7 @@ import time
 
 from google.genai import types
 
+from .body import SECTIONS, Body
 from .camera import Camera
 from .memory import CATEGORIES, Memory
 
@@ -45,6 +46,19 @@ DECLARATIONS = [
         }, ["query"]),
     ),
     types.FunctionDeclaration(
+        name="body_status",
+        description="Kendi donanım durumunu ölç: güç/voltaj, işlemci ısısı, CPU, bellek, disk, "
+                    "wifi ve bağlantı, GPIO pinleri, I2C'ye bağlı cihazlar, ortam ışığı, ortam ses "
+                    "düzeyi, kamera ve sistemler. Kullanıcı nasıl olduğunu, ısını, pilini/gücünü, "
+                    "pinlerini, sensörlerini sorduğunda kullan. 'uyarılar' boş değilse söyle.",
+        parameters_json_schema=_params({
+            "section": {"type": "string", "enum": SECTIONS,
+                        "description": "ozet: genel durum (varsayılan). Belirli bir soru için ilgili "
+                                       "bölümü seç: gpio, i2c, guc, isi, cpu, ram, disk, ag, isik, ses, "
+                                       "sistemler; hepsi: tümü"},
+        }, []),
+    ),
+    types.FunctionDeclaration(
         name="forget",
         description="Kullanıcı bir bilgiyi unutmanı istediğinde o bilgiyi hafızadan sil.",
         parameters_json_schema=_params({
@@ -55,17 +69,21 @@ DECLARATIONS = [
 
 
 class Tools:
-    def __init__(self, camera: Camera | None, memory: Memory):
+    def __init__(self, camera: Camera | None, memory: Memory, body: Body):
         self._camera = camera
         self._memory = memory
+        self._body = body
 
-    def handle(self, call: types.FunctionCall) -> types.FunctionResponse:
+    async def handle(self, call: types.FunctionCall) -> types.FunctionResponse:
         args = call.args or {}
         log.info("arac cagrisi: %s %s", call.name, args)
         try:
             if call.name == "look":
                 return self._look(call)
-            result = getattr(self, f"_{call.name}")(**args)
+            if call.name == "body_status":
+                result = await self._body.status(args.get("section", "ozet"))
+            else:
+                result = getattr(self, f"_{call.name}")(**args)
         except Exception as e:
             log.warning("arac hatasi %s: %s", call.name, e)
             result = {"error": f"Araç çalışmadı: {e}"}
