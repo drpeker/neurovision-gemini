@@ -58,7 +58,7 @@ tail -f logs/robot.log                  # canlı log
 | `nv/camera.py` | `rpicam-vid` MJPEG → son kare |
 | `nv/live.py` | Gemini Live oturumu, yeniden bağlanma |
 | `nv/tools.py` | Modelin çağırdığı araçlar (`look`, `remember`, `recall`, `forget`, `body_status`) |
-| `nv/body.py` | Öz farkındalık (`body_status`): güç, ısı, CPU, RAM, disk, wifi, GPIO, I²C, ışık, ses, alt sistemler. Yalnızca okur |
+| `nv/body.py` | Öz farkındalık (`body_status`): güç, ısı, CPU, RAM, disk, wifi, GPIO, I²C, ışık, ses, alt sistemler, Gemini token kullanımı (`kota`). Yalnızca okur |
 | `nv/debug.py` | Teşhis: son 10 konuşmanın sesi ve oturum talimatı (`logs/debug/`) |
 | `nv/memory.py` | SQLite hafıza: döküm, özetler, kalıcı bilgiler |
 | `nv/summarizer.py` | Sessizlikte özet + otomatik bilgi çıkarma |

@@ -60,6 +60,7 @@ async def consolidate(memory: Memory, client: genai.Client, model: str) -> bool:
         config=types.GenerateContentConfig(
             response_mime_type="application/json", response_json_schema=SCHEMA, temperature=0.2),
     )
+    memory.add_usage("ozet", resp.usage_metadata)
     data = json.loads(resp.text)
     memory.add_episode(data["summary"], turns)
     added = [f["text"] for f in data.get("facts", [])

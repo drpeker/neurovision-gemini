@@ -187,6 +187,9 @@ class LiveBrain:
         if upd and upd.resumable and upd.new_handle:
             self._handle = upd.new_handle
 
+        if msg.usage_metadata:
+            self._memory.add_usage("live", msg.usage_metadata)
+
         if msg.go_away:
             log.info("sunucu baglantiyi kapatacak (kalan %s), yenileniyor", msg.go_away.time_left)
             renew.set()

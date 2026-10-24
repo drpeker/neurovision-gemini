@@ -21,6 +21,10 @@ create table if not exists episodes(
     id integer primary key, ts_start real, ts_end real, last_turn integer, summary text);
 create table if not exists facts(
     id integer primary key, ts real, category text, text text, importance integer, source text);
+-- Gunluk Gemini token kullanimi; kind: in_TEXT, in_AUDIO, in_IMAGE, out_AUDIO, out_TEXT, total
+create table if not exists usage(
+    day text, source text, kind text, tokens integer, calls integer,
+    primary key (day, source, kind));
 -- Dizin katlanmis metni tutar (_fold); asil metin facts tablosunda
 create virtual table if not exists facts_fts using fts5(
     text, content='', contentless_delete=1, tokenize='unicode61 remove_diacritics 2');
@@ -156,6 +160,36 @@ class Memory:
         return self._db.execute(
             "select id, category, text from facts order by importance desc, ts desc limit ?",
             (n,)).fetchall()
+
+    # --- Gemini token kullanimi ---
+    def add_usage(self, source: str, usage) -> None:
+        """usage: Live UsageMetadata ya da generate_content usage_metadata. Live her turda bir kez,
+        o turda islenen baglamin tamamini (prompt) ve uretilen cevabi (response) bildirir."""
+        if not usage:
+            return
+        counts: dict[str, int] = {"total": usage.total_token_count or 0}
+        for prefix, details in (("in", usage.prompt_tokens_details),
+                                ("out", getattr(usage, "response_tokens_details", None)
+                                 or getattr(usage, "candidates_tokens_details", None))):
+            for d in details or []:
+                key = f"{prefix}_{d.modality.name if d.modality else 'TEXT'}"
+                counts[key] = counts.get(key, 0) + (d.token_count or 0)
+        day = time.strftime("%Y-%m-%d")
+        for kind, tokens in counts.items():
+            self._db.execute(
+                "insert into usage values (?, ?, ?, ?, 1) on conflict(day, source, kind) do update "
+                "set tokens = tokens + excluded.tokens, calls = calls + 1", (day, source, kind, tokens))
+        self._db.commit()
+
+    def usage(self, day: str | None = None) -> list[tuple[str, str, int, int]]:
+        day = day or time.strftime("%Y-%m-%d")
+        return self._db.execute("select source, kind, tokens, calls from usage where day=?",
+                                (day,)).fetchall()
+
+    def usage_days(self, n: int) -> list[tuple[str, int, int]]:
+        return self._db.execute(
+            "select day, sum(tokens), sum(calls) from usage where kind='total' "
+            "group by day order by day desc limit ?", (n,)).fetchall()
 
     def count(self) -> dict[str, int]:
         return {t: self._db.execute(f"select count(*) from {t}").fetchone()[0]

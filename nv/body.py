@@ -32,7 +32,10 @@ THROTTLE_BITS = {
     16: "düşük voltaj", 17: "frekans sınırlandı", 18: "kısıtlandı", 19: "yumuşak ısı sınırı",
 }
 SECTIONS = ["ozet", "guc", "isi", "cpu", "ram", "disk", "ag", "gpio", "i2c", "isik", "ses",
-            "sistemler", "hepsi"]
+            "sistemler", "kota", "hepsi"]
+USAGE_LABELS = {"in_TEXT": "giriş_metin", "in_AUDIO": "giriş_ses", "in_IMAGE": "giriş_görüntü",
+                "in_VIDEO": "giriş_video", "out_AUDIO": "çıkış_ses", "out_TEXT": "çıkış_metin"}
+SOURCE_LABELS = {"live": "sohbet (Gemini Live)", "ozet": "hafıza özeti (Flash-Lite)"}
 
 
 def _read(path: str) -> str:
@@ -205,13 +208,29 @@ class Body:
                 "robot_açık_dk": round((time.monotonic() - self._started) / 60, 1),
                 "hafıza": self._memory.count()}
 
+    def _usage(self) -> dict:
+        today: dict[str, dict] = {}
+        for source, kind, tokens, calls in self._memory.usage():
+            s = today.setdefault(SOURCE_LABELS.get(source, source), {})
+            if kind == "total":
+                s["toplam_token"], s["istek_sayısı"] = tokens, calls
+            else:
+                s[USAGE_LABELS.get(kind, kind)] = tokens
+        return {
+            "bugün": today or "henüz kullanım yok",
+            "bugün_toplam_token": sum(s.get("toplam_token", 0) for s in today.values()),
+            "son_7_gün": {day: {"token": t, "istek": c} for day, t, c in self._memory.usage_days(7)},
+            "not": "Sohbette her tur, konuşmanın o ana kadarki tamamını yeniden işler; giriş tokenı "
+                   "bu yüzden konuşma uzadıkça artar. Kota sınırları proje bazında, AI Studio'da görünür.",
+        }
+
     # --- disari acilan ---
     async def status(self, section: str = "ozet") -> dict:
         section = section if section in SECTIONS else "ozet"
         parts = {
             "guc": self._power, "isi": self._temp, "cpu": self._cpu, "ram": self._ram,
             "disk": self._disk, "ag": self._net, "gpio": self._gpio, "i2c": self._i2c,
-            "isik": self._light, "ses": self._sound, "sistemler": self._systems,
+            "isik": self._light, "ses": self._sound, "sistemler": self._systems, "kota": self._usage,
         }
         if section == "ozet":
             wanted = ["guc", "isi", "cpu", "ram", "disk", "ag", "isik", "ses", "sistemler"]
@@ -223,6 +242,8 @@ class Body:
         for key in wanted:
             r = parts[key]()
             out[key] = await r if asyncio.iscoroutine(r) else r
+        if section == "ozet":
+            out["bugünkü_gemini_token"] = self._usage()["bugün_toplam_token"]
         out["uyarılar"] = self._warnings(out)
         return out
 

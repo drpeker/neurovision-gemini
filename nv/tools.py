@@ -49,13 +49,14 @@ DECLARATIONS = [
         name="body_status",
         description="Kendi donanım durumunu ölç: güç/voltaj, işlemci ısısı, CPU, bellek, disk, "
                     "wifi ve bağlantı, GPIO pinleri, I2C'ye bağlı cihazlar, ortam ışığı, ortam ses "
-                    "düzeyi, kamera ve sistemler. Kullanıcı nasıl olduğunu, ısını, pilini/gücünü, "
-                    "pinlerini, sensörlerini sorduğunda kullan. 'uyarılar' boş değilse söyle.",
+                    "düzeyi, kamera ve sistemler, Gemini token kullanımı (kota). Kullanıcı nasıl "
+                    "olduğunu, ısını, pilini/gücünü, pinlerini, sensörlerini, ne kadar kota/token "
+                    "harcadığını sorduğunda kullan. 'uyarılar' boş değilse söyle.",
         parameters_json_schema=_params({
             "section": {"type": "string", "enum": SECTIONS,
                         "description": "ozet: genel durum (varsayılan). Belirli bir soru için ilgili "
                                        "bölümü seç: gpio, i2c, guc, isi, cpu, ram, disk, ag, isik, ses, "
-                                       "sistemler; hepsi: tümü"},
+                                       "sistemler, kota (token kullanımı); hepsi: tümü"},
         }, []),
     ),
     types.FunctionDeclaration(
