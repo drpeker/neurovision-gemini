@@ -20,8 +20,11 @@ log = logging.getLogger(__name__)
 AUDIO_MIME = f"audio/pcm;rate={MIC_RATE}"
 # Sunucu belirteci 2 saat tutuyor; sinira yakin belirteci kullanma
 HANDLE_MAX_AGE = 110 * 60
-# Modelin hazir Ingilizce ret kalibi; oturum buna dusunce her soruya ayni cevabi veriyor
-CANNED_REFUSAL = re.compile(r"just a language model|can.?t help with that", re.I)
+# Modelin hazir ret kalibi (Ingilizce/Turkce); uzun acik kalan oturum buna dusup her soruya
+# ayni cevabi veriyor, ayni soru temiz oturumda sorunsuz cevaplaniyor
+CANNED_REFUSAL = re.compile(
+    r"just a language model|can.?t help with that|sadece bir dil modeli|bu konuda yard[ıi]mc[ıi] olamam",
+    re.I)
 
 
 class LiveBrain:
@@ -43,6 +46,10 @@ class LiveBrain:
         self._last_activity = time.monotonic()
         self._heard: list[str] = []
         self._said: list[str] = []
+        # Ret kalibindan sonra temiz oturumda kullanicinin son sorusu bir kez yeniden sorulur
+        self._retry_text: str | None = None
+        self._retried = False
+        self._muted = False
 
     def _instruction(self) -> str:
         m = self._cfg["memory"]
@@ -116,6 +123,10 @@ class LiveBrain:
                 # Onceki baglanti konusmanin ortasinda koptuysa sunucu o konusmanin bitmesini
                 # bekleyip takili kaliyor; akisin bittigini hemen bildir
                 await s.send_realtime_input(audio_stream_end=True)
+            if self._retry_text:
+                log.info("son soru yeni oturumda tekrar soruluyor: %s", self._retry_text)
+                await s.send_realtime_input(text=self._retry_text)
+                self._retry_text = None
             renew = asyncio.Event()
             tasks = [asyncio.create_task(self._send(s)), asyncio.create_task(self._recv(s, renew)),
                      asyncio.create_task(renew.wait())]
@@ -142,8 +153,9 @@ class LiveBrain:
 
             frames, event = self._gate.feed(frame)
             if event == "start":
+                # Sessizlik sayaci burada sifirlanmaz: ortam gurultusu de kapiyi acabiliyor,
+                # sayac yalnizca tamamlanan konusma turlarinda sifirlanir
                 log.info("konusma algilandi")
-                self._last_activity = time.monotonic()
                 jpeg = self._camera.frame() if self._frame_on_speech and self._camera else None
                 if jpeg:
                     await s.send_realtime_input(video=types.Blob(data=jpeg, mime_type="image/jpeg"))
@@ -176,15 +188,20 @@ class LiveBrain:
             return
         if sc.interrupted:
             self._speaker.clear()
-        if sc.model_turn:
+        if sc.output_transcription and sc.output_transcription.text:
+            self._said.append(sc.output_transcription.text)
+            if not self._muted and CANNED_REFUSAL.search("".join(self._said)):
+                # Ret kalibini duyurma: kalan sesi kes, turun geri kalanini calma
+                self._muted = True
+                self._speaker.clear()
+        if sc.model_turn and not self._muted:
             for part in sc.model_turn.parts or []:
                 if part.inline_data and part.inline_data.data:
                     self._speaker.play(part.inline_data.data)
         if sc.input_transcription and sc.input_transcription.text:
             self._heard.append(sc.input_transcription.text)
-        if sc.output_transcription and sc.output_transcription.text:
-            self._said.append(sc.output_transcription.text)
         if sc.turn_complete:
+            self._muted = False
             heard, said = "".join(self._heard).strip(), "".join(self._said).strip()
             if heard:
                 log.info("kullanici: %s", heard)
@@ -198,8 +215,11 @@ class LiveBrain:
                 self._speaker.clear()
                 self._handle = None
                 self._memory.set("resume_handle", "")
+                if heard and not self._retried:
+                    self._retry_text, self._retried = heard, True
                 renew.set()
                 return
+            self._retried = False
             if said:
                 log.info("robot: %s", said)
                 self._memory.add_turn("robot", said)
