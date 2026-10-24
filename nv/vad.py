@@ -13,10 +13,13 @@ class SpeechGate:
     feed() -> (gonderilecek_kareler, olay); olay "start", "end" ya da None.
     """
 
-    def __init__(self, aggressiveness: int, preroll_ms: int, hangover_ms: int):
+    def __init__(self, aggressiveness: int, preroll_ms: int, hangover_ms: int,
+                 min_speech_ms: int = 140):
         self._vad = webrtcvad.Vad(aggressiveness)
         self._preroll = deque(maxlen=max(1, preroll_ms // FRAME_MS))
-        self._recent = deque(maxlen=5)
+        # Son 200 ms'nin en az min_speech_ms'si konusma olmali: tik, oksuruk, kapi sesi gecmesin
+        self._recent = deque(maxlen=10)
+        self._min_voiced = max(1, min_speech_ms // FRAME_MS)
         self._hangover = max(1, hangover_ms // FRAME_MS)
         self._silent = 0
         self.active = False
@@ -33,8 +36,7 @@ class SpeechGate:
 
         if not self.active:
             self._preroll.append(frame)
-            # Son 5 karenin 3'u konusma ise basla (tek tik/gurultu tetiklemesin)
-            if sum(self._recent) >= 3:
+            if sum(self._recent) >= self._min_voiced:
                 self.active = True
                 self._silent = 0
                 frames = list(self._preroll)

@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import re
 import time
 
 from google import genai
@@ -19,6 +20,8 @@ log = logging.getLogger(__name__)
 AUDIO_MIME = f"audio/pcm;rate={MIC_RATE}"
 # Sunucu belirteci 2 saat tutuyor; sinira yakin belirteci kullanma
 HANDLE_MAX_AGE = 110 * 60
+# Modelin hazir Ingilizce ret kalibi; oturum buna dusunce her soruya ayni cevabi veriyor
+CANNED_REFUSAL = re.compile(r"just a language model|can.?t help with that", re.I)
 
 
 class LiveBrain:
@@ -32,10 +35,11 @@ class LiveBrain:
         self._memory = memory
         self._tools = Tools(camera, memory)
         v = cfg["vad"]
-        self._gate = SpeechGate(v["aggressiveness"], v["preroll_ms"], v["hangover_ms"])
+        self._gate = SpeechGate(v["aggressiveness"], v["preroll_ms"], v["hangover_ms"],
+                                v["min_speech_ms"])
         self._frame_on_speech = cfg["camera"]["enabled"] and cfg["camera"]["frame_on_speech"]
         # Yakin hafiza: belirtec diskte, robot yeniden baslasa da sohbet kaldigi yerden surer
-        self._handle = memory.get("resume_handle", max_age=HANDLE_MAX_AGE)
+        self._handle = memory.get("resume_handle", max_age=HANDLE_MAX_AGE) or None
         self._last_activity = time.monotonic()
         self._heard: list[str] = []
         self._said: list[str] = []
@@ -108,6 +112,10 @@ class LiveBrain:
         async with self._client.aio.live.connect(model=model, config=self._config()) as s:
             log.info("Gemini Live baglandi (%s, %s)", model,
                      "devam" if self._handle else "yeni oturum")
+            if self._handle:
+                # Onceki baglanti konusmanin ortasinda koptuysa sunucu o konusmanin bitmesini
+                # bekleyip takili kaliyor; akisin bittigini hemen bildir
+                await s.send_realtime_input(audio_stream_end=True)
             renew = asyncio.Event()
             tasks = [asyncio.create_task(self._send(s)), asyncio.create_task(self._recv(s, renew)),
                      asyncio.create_task(renew.wait())]
@@ -181,9 +189,17 @@ class LiveBrain:
             if heard:
                 log.info("kullanici: %s", heard)
                 self._memory.add_turn("user", heard)
-            if said:
-                log.info("robot: %s", said)
-                self._memory.add_turn("robot", said)
             self._heard.clear()
             self._said.clear()
             self._last_activity = time.monotonic()
+            if said and CANNED_REFUSAL.search(said):
+                # Takili oturum: dokume yazma, belirteci birak, temiz oturum ac (hafiza korunur)
+                log.warning("robot hazir ret kalibina dustu (%r); temiz oturum aciliyor", said)
+                self._speaker.clear()
+                self._handle = None
+                self._memory.set("resume_handle", "")
+                renew.set()
+                return
+            if said:
+                log.info("robot: %s", said)
+                self._memory.add_turn("robot", said)

@@ -157,7 +157,7 @@ class Memory:
                 for t in ("turns", "episodes", "facts")}
 
     # --- yeni oturum icin baglam ---
-    def context(self, n_facts: int, n_episodes: int) -> str:
+    def context(self, n_facts: int, n_episodes: int, n_recent: int = 12) -> str:
         parts = []
         facts = self.top_facts(n_facts)
         if facts:
@@ -167,6 +167,11 @@ class Memory:
         if eps:
             parts.append("Son sohbetlerin ozeti (orta hafiza):\n" +
                          "\n".join(f"- {_date(ts)}: {s}" for ts, s in eps))
+        # Henuz ozetlenmemis son konusma: temiz oturum acilsa da az once konusulan kopmasin
+        recent = self.pending_turns()[-n_recent:]
+        if recent:
+            parts.append("Az onceki konusma (henuz ozetlenmedi):\n" + "\n".join(
+                f"- {'Kullanici' if r == 'user' else 'Sen'}: {t}" for _, _, r, t in recent))
         return "\n\n".join(parts)
 
     def close(self) -> None:
