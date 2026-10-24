@@ -1,0 +1,41 @@
+# NeuroVision robot ayarlari. API anahtari burada degil, .env dosyasinda.
+
+[gemini]
+model = "gemini-3.8-live"
+voice = "Kore"
+system_instruction = """
+Sen NeuroVision adinda, paletli, kamerali ve mikrofonlu bir ev robotusun.
+Her zaman Turkce konus. Kisa, dogal ve samimi cevaplar ver; genelde bir iki cumle yeterli.
+Etrafini gormek icin look aracini kullan; gormedigin bir seyi gormus gibi anlatma.
+Kimseyi yuzunden tanimlamaya calisma.
+"""
+
+[audio]
+# ALSA cihaz adlari (~/.asoundrc): mic = INMP441, speaker = 3.5 mm jak
+mic = "mic"
+speaker = "speaker"
+# INMP441 yazilim kazanci (-10..30 dB, ~/.asoundrc "Mic Boost"); konusma tepesi 1.0'a dayanirsa dusur
+mic_boost_db = 6
+# Robot konusurken mikrofon kapali (AEC yok); konusma bitince bu kadar bekle
+echo_tail_ms = 300
+
+[vad]
+# webrtcvad hassasiyeti 0-3 (3 en secici)
+aggressiveness = 2
+preroll_ms = 300
+hangover_ms = 800
+
+[camera]
+enabled = true
+width = 320
+height = 240
+# OV5647 1 kare/s'de cikti vermiyor; 2 en dusuk calisan deger
+fps = 2
+# rpicam yalnizca 0 veya 180 derece donduruyor
+rotation = 0
+# Konusma baslarken modele guncel bir kare gonder
+frame_on_speech = true
+
+[log]
+file = "logs/robot.log"
+level = "INFO"
