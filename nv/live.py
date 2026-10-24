@@ -2,13 +2,12 @@
 
 import asyncio
 import logging
-import re
 import time
 
 from google import genai
 from google.genai import types
 
-from .audio import MIC_RATE, Mic, Speaker
+from .audio import FRAME_MS, MIC_RATE, Mic, Speaker
 from .camera import Camera
 from .memory import Memory
 from .summarizer import consolidate
@@ -18,13 +17,6 @@ from .vad import SpeechGate
 log = logging.getLogger(__name__)
 
 AUDIO_MIME = f"audio/pcm;rate={MIC_RATE}"
-# Sunucu belirteci 2 saat tutuyor; sinira yakin belirteci kullanma
-HANDLE_MAX_AGE = 110 * 60
-# Modelin hazir ret kalibi (Ingilizce/Turkce); uzun acik kalan oturum buna dusup her soruya
-# ayni cevabi veriyor, ayni soru temiz oturumda sorunsuz cevaplaniyor
-CANNED_REFUSAL = re.compile(
-    r"just a language model|can.?t help with that|sadece bir dil modeli|bu konuda yard[ıi]mc[ıi] olamam",
-    re.I)
 
 
 class LiveBrain:
@@ -39,17 +31,14 @@ class LiveBrain:
         self._tools = Tools(camera, memory)
         v = cfg["vad"]
         self._gate = SpeechGate(v["aggressiveness"], v["preroll_ms"], v["hangover_ms"],
-                                v["min_speech_ms"])
+                                v["min_speech_ms"], v["margin_db"])
         self._frame_on_speech = cfg["camera"]["enabled"] and cfg["camera"]["frame_on_speech"]
-        # Yakin hafiza: belirtec diskte, robot yeniden baslasa da sohbet kaldigi yerden surer
-        self._handle = memory.get("resume_handle", max_age=HANDLE_MAX_AGE) or None
+        # Oturum devami yalnizca calisirken (GoAway, ag kopmasi) kullanilir; yeniden baslayinca
+        # temiz oturum acilir, sureklilik hafiza baglamiyla saglanir
+        self._handle: str | None = None
         self._last_activity = time.monotonic()
         self._heard: list[str] = []
         self._said: list[str] = []
-        # Ret kalibindan sonra temiz oturumda kullanicinin son sorusu bir kez yeniden sorulur
-        self._retry_text: str | None = None
-        self._retried = False
-        self._muted = False
 
     def _instruction(self) -> str:
         m = self._cfg["memory"]
@@ -78,11 +67,20 @@ class LiveBrain:
         )
 
     async def run(self) -> None:
+        await self._calibrate()
         consolidator = asyncio.create_task(self._consolidate_when_idle(), name="memory")
         try:
             await self._connect_forever()
         finally:
             consolidator.cancel()
+
+    async def _calibrate(self) -> None:
+        """Acilista ortami dinle; konusma bu taban seviyenin belirgin ustunde olmali."""
+        n = max(1, self._cfg["vad"]["calibrate_ms"] // FRAME_MS)
+        frames = [await self._mic.frames.get() for _ in range(n)]
+        floor_db = self._gate.calibrate(frames)
+        log.info("ortam gurultusu %.1f dBFS; konusma esigi %.1f dBFS",
+                 floor_db, floor_db + self._cfg["vad"]["margin_db"])
 
     async def _consolidate_when_idle(self) -> None:
         """Orta/uzun hafiza: sohbet sustugunda dokumu ozetle, kalici bilgileri cikar."""
@@ -110,7 +108,6 @@ class LiveBrain:
                     # Iki kez ust uste basarisizsa belirtec gecersiz olabilir: yeni oturum ac
                     log.info("oturum belirteci birakildi, yeni oturum acilacak")
                     self._handle = None
-                    self._memory.set("resume_handle", "")
                 await asyncio.sleep(delay)
                 delay = min(delay * 2, 30)
 
@@ -120,13 +117,9 @@ class LiveBrain:
             log.info("Gemini Live baglandi (%s, %s)", model,
                      "devam" if self._handle else "yeni oturum")
             if self._handle:
-                # Onceki baglanti konusmanin ortasinda koptuysa sunucu o konusmanin bitmesini
+                # Baglanti konusmanin ortasinda koptuysa sunucu o konusmanin bitmesini
                 # bekleyip takili kaliyor; akisin bittigini hemen bildir
                 await s.send_realtime_input(audio_stream_end=True)
-            if self._retry_text:
-                log.info("son soru yeni oturumda tekrar soruluyor: %s", self._retry_text)
-                await s.send_realtime_input(text=self._retry_text)
-                self._retry_text = None
             renew = asyncio.Event()
             tasks = [asyncio.create_task(self._send(s)), asyncio.create_task(self._recv(s, renew)),
                      asyncio.create_task(renew.wait())]
@@ -153,9 +146,7 @@ class LiveBrain:
 
             frames, event = self._gate.feed(frame)
             if event == "start":
-                # Sessizlik sayaci burada sifirlanmaz: ortam gurultusu de kapiyi acabiliyor,
-                # sayac yalnizca tamamlanan konusma turlarinda sifirlanir
-                log.info("konusma algilandi")
+                log.info("konusma onaylandi, modele gonderiliyor")
                 jpeg = self._camera.frame() if self._frame_on_speech and self._camera else None
                 if jpeg:
                     await s.send_realtime_input(video=types.Blob(data=jpeg, mime_type="image/jpeg"))
@@ -173,7 +164,6 @@ class LiveBrain:
         upd = msg.session_resumption_update
         if upd and upd.resumable and upd.new_handle:
             self._handle = upd.new_handle
-            self._memory.set("resume_handle", upd.new_handle)
 
         if msg.go_away:
             log.info("sunucu baglantiyi kapatacak (kalan %s), yenileniyor", msg.go_away.time_left)
@@ -188,38 +178,22 @@ class LiveBrain:
             return
         if sc.interrupted:
             self._speaker.clear()
-        if sc.output_transcription and sc.output_transcription.text:
-            self._said.append(sc.output_transcription.text)
-            if not self._muted and CANNED_REFUSAL.search("".join(self._said)):
-                # Ret kalibini duyurma: kalan sesi kes, turun geri kalanini calma
-                self._muted = True
-                self._speaker.clear()
-        if sc.model_turn and not self._muted:
+        if sc.model_turn:
             for part in sc.model_turn.parts or []:
                 if part.inline_data and part.inline_data.data:
                     self._speaker.play(part.inline_data.data)
         if sc.input_transcription and sc.input_transcription.text:
             self._heard.append(sc.input_transcription.text)
+        if sc.output_transcription and sc.output_transcription.text:
+            self._said.append(sc.output_transcription.text)
         if sc.turn_complete:
-            self._muted = False
             heard, said = "".join(self._heard).strip(), "".join(self._said).strip()
             if heard:
                 log.info("kullanici: %s", heard)
                 self._memory.add_turn("user", heard)
-            self._heard.clear()
-            self._said.clear()
-            self._last_activity = time.monotonic()
-            if said and CANNED_REFUSAL.search(said):
-                # Takili oturum: dokume yazma, belirteci birak, temiz oturum ac (hafiza korunur)
-                log.warning("robot hazir ret kalibina dustu (%r); temiz oturum aciliyor", said)
-                self._speaker.clear()
-                self._handle = None
-                self._memory.set("resume_handle", "")
-                if heard and not self._retried:
-                    self._retry_text, self._retried = heard, True
-                renew.set()
-                return
-            self._retried = False
             if said:
                 log.info("robot: %s", said)
                 self._memory.add_turn("robot", said)
+            self._heard.clear()
+            self._said.clear()
+            self._last_activity = time.monotonic()

@@ -10,7 +10,9 @@ import sqlite3
 import time
 from pathlib import Path
 
-CATEGORIES = ["kisi", "tercih", "ev", "esya", "rutin", "diger"]
+CATEGORIES = ["kişi", "tercih", "ev", "eşya", "alışkanlık", "diğer"]
+# Eski kayitlardaki Turkce karaktersiz kategori adlari
+OLD_CATEGORIES = {"kisi": "kişi", "esya": "eşya", "rutin": "alışkanlık", "diger": "diğer"}
 
 SCHEMA = """
 create table if not exists kv(key text primary key, value text, ts real);
@@ -56,6 +58,8 @@ class Memory:
         path.parent.mkdir(parents=True, exist_ok=True)
         self._db = sqlite3.connect(path)
         self._db.executescript(SCHEMA)
+        for old, new in OLD_CATEGORIES.items():
+            self._db.execute("update facts set category=? where category=?", (new, old))
         self._db.commit()
 
     # --- yakin: oturum belirteci ---
@@ -94,7 +98,7 @@ class Memory:
         return rows[::-1]
 
     # --- uzun: kalici bilgiler ---
-    def remember(self, text: str, category: str = "diger", importance: int = 3,
+    def remember(self, text: str, category: str = "diğer", importance: int = 3,
                  source: str = "tool") -> int | None:
         text = text.strip()
         if not text:
@@ -102,7 +106,8 @@ class Memory:
         folded = _fold(text).rstrip(". ")
         if any(_fold(t).rstrip(". ") == folded for (t,) in self._db.execute("select text from facts")):
             return None
-        category = category if category in CATEGORIES else "diger"
+        category = OLD_CATEGORIES.get(category, category)
+        category = category if category in CATEGORIES else "diğer"
         importance = max(1, min(5, int(importance)))
         cur = self._db.execute(
             "insert into facts(ts, category, text, importance, source) values (?, ?, ?, ?, ?)",
@@ -140,7 +145,7 @@ class Memory:
             return []
         rows = self._db.execute(
             "select f.id, f.text from facts_fts join facts f on f.id = facts_fts.rowid "
-            "where facts_fts match ? order by rank limit 3", (q,)).fetchall()
+            "where facts_fts match ? order by rank limit 1", (q,)).fetchall()
         for fid, _ in rows:
             self._db.execute("delete from facts where id=?", (fid,))
             self._db.execute("delete from facts_fts where rowid=?", (fid,))
@@ -161,17 +166,17 @@ class Memory:
         parts = []
         facts = self.top_facts(n_facts)
         if facts:
-            parts.append("Bildiklerin (uzun hafiza):\n" +
-                         "\n".join(f"- [{c}] {t}" for _, c, t in facts))
+            parts.append("Kullanıcı ve ev hakkında bildiklerin:\n" +
+                         "\n".join(f"- {t}" for _, _, t in facts))
         eps = self.recent_episodes(n_episodes)
         if eps:
-            parts.append("Son sohbetlerin ozeti (orta hafiza):\n" +
+            parts.append("Önceki sohbetlerinizin özeti:\n" +
                          "\n".join(f"- {_date(ts)}: {s}" for ts, s in eps))
         # Henuz ozetlenmemis son konusma: temiz oturum acilsa da az once konusulan kopmasin
         recent = self.pending_turns()[-n_recent:]
         if recent:
-            parts.append("Az onceki konusma (henuz ozetlenmedi):\n" + "\n".join(
-                f"- {'Kullanici' if r == 'user' else 'Sen'}: {t}" for _, _, r, t in recent))
+            parts.append("Az önceki konuşmanız:\n" + "\n".join(
+                f"- {'Kullanıcı' if r == 'user' else 'Sen'}: {t}" for _, _, r, t in recent))
         return "\n\n".join(parts)
 
     def close(self) -> None:

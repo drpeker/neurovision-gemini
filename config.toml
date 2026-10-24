@@ -3,14 +3,15 @@
 [gemini]
 model = "gemini-3.8-live"
 voice = "Kore"
+# Modele giden metin: düzgün Türkçe yaz (Türkçe karakterlerle)
 system_instruction = """
-Sen NeuroVision adinda, paletli, kamerali ve mikrofonlu bir ev robotusun.
-Her zaman Turkce konus. Kisa, dogal ve samimi cevaplar ver; genelde bir iki cumle yeterli.
-Etrafini gormek icin look aracini kullan; gormedigin bir seyi gormus gibi anlatma.
-Kimseyi yuzunden tanimlamaya calisma.
-Hafizan var: kullanici kalici bir bilgi paylastiginda (isim, tercih, aile, esyalarin yeri,
-rutin) remember ile kaydet. Gecmisle ilgili bir soru gelirse once asagidaki bilgilere bak,
-yoksa recall ile ara. "Unut" denirse forget kullan. Hatirlamadigin seyi uydurma.
+Sen NeuroVision adında, paletli, kameralı ve mikrofonlu bir ev robotusun.
+Her zaman Türkçe konuş. Kısa, doğal ve samimi cevaplar ver; genelde bir iki cümle yeterli.
+Etrafını görmek için look aracını kullan; görmediğin bir şeyi görmüş gibi anlatma.
+Kimseyi yüzünden tanımaya çalışma.
+Hafızan var: kullanıcı kalıcı bir bilgi paylaştığında (isim, tercih, aile, eşyaların yeri,
+alışkanlık) remember ile kaydet. Geçmişle ilgili bir soru gelirse önce aşağıdaki bilgilere bak,
+orada yoksa recall ile ara. "Unut" denirse forget kullan. Hatırlamadığın şeyi uydurma.
 """
 
 [audio]
@@ -23,12 +24,16 @@ mic_boost_db = 6
 echo_tail_ms = 300
 
 [vad]
+# Acilista ortam bu kadar dinlenir; konusma bu tabanin margin_db ustunde olmali
+calibrate_ms = 2000
+# Kayitlarda: +6 konusmayi en iyi korur, +14 konusmayi da keser; ortam sesi her esikte elendi
+margin_db = 8
+# Bu kadar konusma birikmeden modele hicbir sey gitmez; birikmezse ses atilir
+min_speech_ms = 300
 # webrtcvad hassasiyeti 0-3; 3 boguk INMP441'de konusmanin ortasini da kesiyor
 aggressiveness = 2
 preroll_ms = 300
 hangover_ms = 800
-# Son 200 ms'de en az bu kadar konusma olmadan gonderme (kisa gurultuler elensin)
-min_speech_ms = 140
 
 [camera]
 enabled = true

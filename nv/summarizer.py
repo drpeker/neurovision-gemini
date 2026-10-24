@@ -11,18 +11,20 @@ from .memory import CATEGORIES, Memory
 
 log = logging.getLogger(__name__)
 
-PROMPT = """Asagida bir ev robotu ile kullanicinin konusma dokumu var.
-1) "summary": Sohbetin 1-3 cumlelik Turkce ozeti (kim ne istedi, ne konusuldu, yarim kalan isler).
-2) "facts": Kullanici veya ev hakkinda ILERIDE ISE YARAYACAK kalici bilgiler (isim, tercih, aile,
-   esyalarin yeri, rutinler). Gecici seyleri (hava, o anki ruh hali, selamlasma) ekleme.
-   Asagidaki "bilinenler" listesinde zaten olan bilgiyi tekrar ekleme.
-   Saglik, sifre, banka gibi hassas bilgileri ekleme.
-   Her bilgi: {{"text": kisa Turkce cumle, "category": {cats}, "importance": 1-5}}.
+PROMPT = """Aşağıda bir ev robotu ile kullanıcının konuşma dökümü var.
+Döküm otomatik ses tanımadan geliyor; anlamsız, yabancı dilde ya da bağlamsız parçalar
+gürültüdür, onları yok say.
+1) "summary": Sohbetin 1-3 cümlelik Türkçe özeti (kim ne istedi, ne konuşuldu, yarım kalan işler).
+2) "facts": Kullanıcı veya ev hakkında İLERİDE İŞE YARAYACAK kalıcı bilgiler (isim, tercih, aile,
+   eşyaların yeri, alışkanlıklar). Geçici şeyleri (hava, o anki ruh hali, selamlaşma) ekleme.
+   Aşağıdaki "bilinenler" listesinde zaten olan bilgiyi tekrar ekleme.
+   Sağlık, şifre, banka gibi hassas bilgileri ekleme.
+   Her bilgi: {{"text": kısa Türkçe cümle, "category": {cats}, "importance": 1-5}}.
 
 Bilinenler:
 {known}
 
-Dokum:
+Döküm:
 {transcript}
 """
 
@@ -49,9 +51,9 @@ async def consolidate(memory: Memory, client: genai.Client, model: str) -> bool:
     if not turns:
         return False
     transcript = "\n".join(
-        f"[{time.strftime('%H:%M', time.localtime(ts))}] {'Kullanici' if role == 'user' else 'Robot'}: {text}"
+        f"[{time.strftime('%H:%M', time.localtime(ts))}] {'Kullanıcı' if role == 'user' else 'Robot'}: {text}"
         for _, ts, role, text in turns)
-    known = "\n".join(f"- {t}" for _, _, t in memory.top_facts(60)) or "(yok)"
+    known = "\n".join(f"- {t}" for _, _, t in memory.top_facts(60)) or "(henüz yok)"
     resp = await client.aio.models.generate_content(
         model=model,
         contents=PROMPT.format(cats="|".join(CATEGORIES), known=known, transcript=transcript),
