@@ -2,41 +2,55 @@
 
 import asyncio
 import logging
+import time
 
 from google import genai
 from google.genai import types
 
 from .audio import MIC_RATE, Mic, Speaker
 from .camera import Camera
+from .memory import Memory
+from .summarizer import consolidate
 from .tools import DECLARATIONS, Tools
 from .vad import SpeechGate
 
 log = logging.getLogger(__name__)
 
 AUDIO_MIME = f"audio/pcm;rate={MIC_RATE}"
+# Sunucu belirteci 2 saat tutuyor; sinira yakin belirteci kullanma
+HANDLE_MAX_AGE = 110 * 60
 
 
 class LiveBrain:
     def __init__(self, cfg: dict, api_key: str, mic: Mic, speaker: Speaker,
-                 camera: Camera | None, tools: Tools):
+                 camera: Camera | None, memory: Memory):
         self._cfg = cfg
         self._client = genai.Client(api_key=api_key)
         self._mic = mic
         self._speaker = speaker
         self._camera = camera
-        self._tools = tools
+        self._memory = memory
+        self._tools = Tools(camera, memory)
         v = cfg["vad"]
         self._gate = SpeechGate(v["aggressiveness"], v["preroll_ms"], v["hangover_ms"])
         self._frame_on_speech = cfg["camera"]["enabled"] and cfg["camera"]["frame_on_speech"]
-        self._handle: str | None = None  # oturum devam belirteci (2 saat gecerli)
+        # Yakin hafiza: belirtec diskte, robot yeniden baslasa da sohbet kaldigi yerden surer
+        self._handle = memory.get("resume_handle", max_age=HANDLE_MAX_AGE)
+        self._last_activity = time.monotonic()
         self._heard: list[str] = []
         self._said: list[str] = []
+
+    def _instruction(self) -> str:
+        m = self._cfg["memory"]
+        text = self._cfg["gemini"]["system_instruction"].strip()
+        context = self._memory.context(m["facts_in_prompt"], m["episodes_in_prompt"])
+        return f"{text}\n\n{context}" if context else text
 
     def _config(self) -> types.LiveConnectConfig:
         g = self._cfg["gemini"]
         return types.LiveConnectConfig(
             response_modalities=["AUDIO"],
-            system_instruction=g["system_instruction"].strip(),
+            system_instruction=self._instruction(),
             speech_config=types.SpeechConfig(voice_config=types.VoiceConfig(
                 prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=g["voice"]))),
             realtime_input_config=types.RealtimeInputConfig(
@@ -53,6 +67,25 @@ class LiveBrain:
         )
 
     async def run(self) -> None:
+        consolidator = asyncio.create_task(self._consolidate_when_idle(), name="memory")
+        try:
+            await self._connect_forever()
+        finally:
+            consolidator.cancel()
+
+    async def _consolidate_when_idle(self) -> None:
+        """Orta/uzun hafiza: sohbet sustugunda dokumu ozetle, kalici bilgileri cikar."""
+        m = self._cfg["memory"]
+        while True:
+            await asyncio.sleep(30)
+            if time.monotonic() - self._last_activity < m["idle_s"]:
+                continue
+            try:
+                await consolidate(self._memory, self._client, m["summary_model"])
+            except Exception as e:
+                log.warning("hafiza ozetleme hatasi: %s", e)
+
+    async def _connect_forever(self) -> None:
         delay = 1
         while True:
             try:
@@ -62,6 +95,11 @@ class LiveBrain:
                 raise
             except Exception as e:
                 log.warning("oturum hatasi: %s; %d sn sonra yeniden baglaniyor", e, delay)
+                if self._handle and delay >= 2:
+                    # Iki kez ust uste basarisizsa belirtec gecersiz olabilir: yeni oturum ac
+                    log.info("oturum belirteci birakildi, yeni oturum acilacak")
+                    self._handle = None
+                    self._memory.set("resume_handle", "")
                 await asyncio.sleep(delay)
                 delay = min(delay * 2, 30)
 
@@ -97,6 +135,7 @@ class LiveBrain:
             frames, event = self._gate.feed(frame)
             if event == "start":
                 log.info("konusma algilandi")
+                self._last_activity = time.monotonic()
                 jpeg = self._camera.frame() if self._frame_on_speech and self._camera else None
                 if jpeg:
                     await s.send_realtime_input(video=types.Blob(data=jpeg, mime_type="image/jpeg"))
@@ -114,6 +153,7 @@ class LiveBrain:
         upd = msg.session_resumption_update
         if upd and upd.resumable and upd.new_handle:
             self._handle = upd.new_handle
+            self._memory.set("resume_handle", upd.new_handle)
 
         if msg.go_away:
             log.info("sunucu baglantiyi kapatacak (kalan %s), yenileniyor", msg.go_away.time_left)
@@ -137,9 +177,13 @@ class LiveBrain:
         if sc.output_transcription and sc.output_transcription.text:
             self._said.append(sc.output_transcription.text)
         if sc.turn_complete:
-            if self._heard:
-                log.info("kullanici: %s", "".join(self._heard).strip())
-            if self._said:
-                log.info("robot: %s", "".join(self._said).strip())
+            heard, said = "".join(self._heard).strip(), "".join(self._said).strip()
+            if heard:
+                log.info("kullanici: %s", heard)
+                self._memory.add_turn("user", heard)
+            if said:
+                log.info("robot: %s", said)
+                self._memory.add_turn("robot", said)
             self._heard.clear()
             self._said.clear()
+            self._last_activity = time.monotonic()

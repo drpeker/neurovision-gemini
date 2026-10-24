@@ -9,6 +9,21 @@ Paletli ev robotu için kompakt sesli ve görsel asistan. Pi 4'te geliştirildi,
 
 Kaynak kullanımı (Pi 4): ~%5 CPU, ~90 MB RAM.
 
+## Hafıza
+Hepsi Pi'de, `data/memory.db` (SQLite) içinde. Git dışında tutulur, fotoğraflar saklanmaz.
+
+| Katman | İçerik | Nasıl |
+|---|---|---|
+| Yakın | Şu anki sohbet | Gemini bağlamı + oturum belirteci diskte (yeniden başlayınca 2 saate kadar kaldığı yerden devam eder) |
+| Orta | Son sohbetler | Döküm kaydedilir; 2 dk sessizlikten sonra `gemini-3.5-flash-lite` özetler |
+| Uzun | Kalıcı bilgiler | `remember`/`recall`/`forget` araçları + özetleyicinin döküm üzerinden otomatik çıkardığı bilgiler |
+
+Yeni oturum açılırken en önemli bilgiler ve son özetler sistem talimatına eklenir. Hafızayı görmek için:
+```bash
+sqlite3 data/memory.db "select category, text from facts order by importance desc"
+sqlite3 data/memory.db "select datetime(ts_start,'unixepoch','localtime'), summary from episodes"
+```
+
 ## Kurulum
 ```bash
 cd ~/projects/neurovision-updated
@@ -42,6 +57,8 @@ tail -f logs/robot.log                  # canlı log
 | `nv/vad.py` | Yerel konuşma kapısı |
 | `nv/camera.py` | `rpicam-vid` MJPEG → son kare |
 | `nv/live.py` | Gemini Live oturumu, yeniden bağlanma |
-| `nv/tools.py` | Modelin çağırdığı araçlar (`look`) |
+| `nv/tools.py` | Modelin çağırdığı araçlar (`look`, `remember`, `recall`, `forget`) |
+| `nv/memory.py` | SQLite hafıza: belirteç, döküm, özetler, kalıcı bilgiler |
+| `nv/summarizer.py` | Sessizlikte özet + otomatik bilgi çıkarma |
 
 Yeni araç eklemek için `nv/tools.py` içindeki `DECLARATIONS` listesine bir tanım, `handle()` fonksiyonuna da bir dal ekle.

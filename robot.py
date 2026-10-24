@@ -99,12 +99,14 @@ async def check(cfg: dict) -> None:
 
 async def run(cfg: dict) -> None:
     from nv.live import LiveBrain
-    from nv.tools import Tools
+    from nv.memory import Memory
 
     key = os.environ.get("GEMINI_API_KEY")
     if not key:
         sys.exit(f"GEMINI_API_KEY yok: {ROOT / '.env'} dosyasina ekle (.env.example'a bak)")
 
+    memory = Memory(ROOT / cfg["memory"]["db"])
+    log.info("hafiza: %s", memory.count())
     a = cfg["audio"]
     mic, speaker = Mic(a["mic"]), Speaker(a["speaker"], a["echo_tail_ms"])
     camera = make_camera(cfg)
@@ -112,7 +114,7 @@ async def run(cfg: dict) -> None:
         await camera.start()
     speaker.start()
     mic.start()
-    brain = LiveBrain(cfg, key, mic, speaker, camera, Tools(camera))
+    brain = LiveBrain(cfg, key, mic, speaker, camera, memory)
 
     task = asyncio.create_task(brain.run(), name="brain")
     loop = asyncio.get_running_loop()
@@ -128,6 +130,7 @@ async def run(cfg: dict) -> None:
         speaker.stop()
         if camera:
             await camera.stop()
+        memory.close()
         log.info("kapatildi")
 
 

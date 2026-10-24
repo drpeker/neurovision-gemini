@@ -8,6 +8,9 @@ Sen NeuroVision adinda, paletli, kamerali ve mikrofonlu bir ev robotusun.
 Her zaman Turkce konus. Kisa, dogal ve samimi cevaplar ver; genelde bir iki cumle yeterli.
 Etrafini gormek icin look aracini kullan; gormedigin bir seyi gormus gibi anlatma.
 Kimseyi yuzunden tanimlamaya calisma.
+Hafizan var: kullanici kalici bir bilgi paylastiginda (isim, tercih, aile, esyalarin yeri,
+rutin) remember ile kaydet. Gecmisle ilgili bir soru gelirse once asagidaki bilgilere bak,
+yoksa recall ile ara. "Unut" denirse forget kullan. Hatirlamadigin seyi uydurma.
 """
 
 [audio]
@@ -35,6 +38,16 @@ fps = 2
 rotation = 0
 # Konusma baslarken modele guncel bir kare gonder
 frame_on_speech = true
+
+[memory]
+# Pi'de yerel SQLite; git disinda
+db = "data/memory.db"
+# Sohbet bu kadar sustuktan sonra dokum ozetlenir ve kalici bilgiler cikarilir
+idle_s = 120
+summary_model = "gemini-3.5-flash-lite"
+# Yeni oturum acilirken modele verilen bilgi ve ozet sayisi
+facts_in_prompt = 40
+episodes_in_prompt = 5
 
 [log]
 file = "logs/robot.log"
