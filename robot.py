@@ -141,6 +141,7 @@ def main() -> None:
     args = p.parse_args()
 
     cfg = tomllib.loads(Path(args.config).read_text())
+    cfg["debug"]["dir"] = str(ROOT / cfg["debug"]["dir"])
     load_env(ROOT / ".env")
     setup_logging(cfg["log"])
     set_mic_boost(cfg["audio"]["mic_boost_db"])

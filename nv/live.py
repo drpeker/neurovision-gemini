@@ -3,12 +3,14 @@
 import asyncio
 import logging
 import time
+from pathlib import Path
 
 from google import genai
 from google.genai import types
 
 from .audio import FRAME_MS, MIC_RATE, Mic, Speaker
 from .camera import Camera
+from .debug import DebugRecorder
 from .memory import Memory
 from .summarizer import consolidate
 from .tools import DECLARATIONS, Tools
@@ -33,6 +35,8 @@ class LiveBrain:
         self._gate = SpeechGate(v["aggressiveness"], v["preroll_ms"], v["hangover_ms"],
                                 v["min_speech_ms"], v["margin_db"])
         self._frame_on_speech = cfg["camera"]["enabled"] and cfg["camera"]["frame_on_speech"]
+        d = cfg["debug"]
+        self._rec = DebugRecorder(Path(d["dir"]), d["keep"]) if d["enabled"] else None
         # Oturum devami yalnizca calisirken (GoAway, ag kopmasi) kullanilir; yeniden baslayinca
         # temiz oturum acilir, sureklilik hafiza baglamiyla saglanir
         self._handle: str | None = None
@@ -113,9 +117,12 @@ class LiveBrain:
 
     async def _session(self) -> None:
         model = self._cfg["gemini"]["model"]
-        async with self._client.aio.live.connect(model=model, config=self._config()) as s:
+        config = self._config()
+        async with self._client.aio.live.connect(model=model, config=config) as s:
             log.info("Gemini Live baglandi (%s, %s)", model,
                      "devam" if self._handle else "yeni oturum")
+            if self._rec and not self._handle:
+                self._rec.session(model, config.system_instruction)
             if self._handle:
                 # Baglanti konusmanin ortasinda koptuysa sunucu o konusmanin bitmesini
                 # bekleyip takili kaliyor; akisin bittigini hemen bildir
@@ -141,19 +148,27 @@ class LiveBrain:
                 # Yari cift yonlu: robot konusurken kendi sesini dinleme
                 if self._gate.active:
                     await s.send_realtime_input(audio_stream_end=True)
+                    if self._rec:
+                        self._rec.end()
                 self._gate.reset()
                 continue
 
             frames, event = self._gate.feed(frame)
             if event == "start":
                 log.info("konusma onaylandi, modele gonderiliyor")
+                if self._rec:
+                    self._rec.start([])
                 jpeg = self._camera.frame() if self._frame_on_speech and self._camera else None
                 if jpeg:
                     await s.send_realtime_input(video=types.Blob(data=jpeg, mime_type="image/jpeg"))
             for f in frames:
                 await s.send_realtime_input(audio=types.Blob(data=f, mime_type=AUDIO_MIME))
+            if self._rec and frames:
+                self._rec.add(frames)
             if event == "end":
                 await s.send_realtime_input(audio_stream_end=True)
+                if self._rec:
+                    self._rec.end()
 
     async def _recv(self, s, renew: asyncio.Event) -> None:
         while True:

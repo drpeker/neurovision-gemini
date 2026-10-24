@@ -43,8 +43,8 @@ height = 240
 fps = 2
 # rpicam yalnizca 0 veya 180 derece donduruyor
 rotation = 0
-# Konusma baslarken modele guncel bir kare gonder
-frame_on_speech = true
+# true: her konusma basinda modele kare gider; false: yalnizca model look ile isteyince
+frame_on_speech = false
 
 [memory]
 # Pi'de yerel SQLite; git disinda
@@ -55,6 +55,12 @@ summary_model = "gemini-3.5-flash-lite"
 # Yeni oturum acilirken modele verilen bilgi ve ozet sayisi
 facts_in_prompt = 40
 episodes_in_prompt = 5
+
+[debug]
+# Modele giden son konusmalarin sesi ve oturum talimati; bir hatayi yeniden oynatmak icin
+enabled = true
+dir = "logs/debug"
+keep = 10
 
 [log]
 file = "logs/robot.log"

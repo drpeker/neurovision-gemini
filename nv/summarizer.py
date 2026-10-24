@@ -13,7 +13,7 @@ log = logging.getLogger(__name__)
 
 PROMPT = """Aşağıda bir ev robotu ile kullanıcının konuşma dökümü var.
 Döküm otomatik ses tanımadan geliyor; anlamsız, yabancı dilde ya da bağlamsız parçalar
-gürültüdür, onları yok say.
+gürültüdür, onları yok say. Robotun konuyla ilgisiz ya da kalıp cevaplarını özete taşıma.
 1) "summary": Sohbetin 1-3 cümlelik Türkçe özeti (kim ne istedi, ne konuşuldu, yarım kalan işler).
 2) "facts": Kullanıcı veya ev hakkında İLERİDE İŞE YARAYACAK kalıcı bilgiler (isim, tercih, aile,
    eşyaların yeri, alışkanlıklar). Geçici şeyleri (hava, o anki ruh hali, selamlaşma) ekleme.

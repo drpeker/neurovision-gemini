@@ -162,7 +162,7 @@ class Memory:
                 for t in ("turns", "episodes", "facts")}
 
     # --- yeni oturum icin baglam ---
-    def context(self, n_facts: int, n_episodes: int, n_recent: int = 12) -> str:
+    def context(self, n_facts: int, n_episodes: int, n_recent: int = 8) -> str:
         parts = []
         facts = self.top_facts(n_facts)
         if facts:
@@ -172,11 +172,12 @@ class Memory:
         if eps:
             parts.append("Önceki sohbetlerinizin özeti:\n" +
                          "\n".join(f"- {_date(ts)}: {s}" for ts, s in eps))
-        # Henuz ozetlenmemis son konusma: temiz oturum acilsa da az once konusulan kopmasin
-        recent = self.pending_turns()[-n_recent:]
+        # Henuz ozetlenmemis son konusma: yalnizca kullanicinin soyledikleri. Robotun eski
+        # cevaplari geri beslenmez; yoksa bozuk bir cevap sonraki oturumlarda taklit ediliyor
+        recent = [t for _, _, r, t in self.pending_turns() if r == "user"][-n_recent:]
         if recent:
-            parts.append("Az önceki konuşmanız:\n" + "\n".join(
-                f"- {'Kullanıcı' if r == 'user' else 'Sen'}: {t}" for _, _, r, t in recent))
+            parts.append("Kullanıcının az önce söyledikleri:\n" +
+                         "\n".join(f"- {t}" for t in recent))
         return "\n\n".join(parts)
 
     def close(self) -> None:
