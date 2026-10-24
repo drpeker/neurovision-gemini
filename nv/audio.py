@@ -2,9 +2,11 @@
 
 import asyncio
 import logging
+import math
 import subprocess
 import threading
 import time
+from array import array
 
 import sounddevice as sd
 
@@ -27,12 +29,36 @@ def set_mic_boost(db: int, card: str = "inmp441") -> None:
         log.info("mic kazanci: %+d dB", db)
 
 
-class Mic:
-    """20 ms'lik PCM karelerini asyncio kuyruguna yazar."""
+class HighPass:
+    """Birinci derece DC engelleyici / yuksek geciren filtre.
 
-    def __init__(self, device: str):
+    INMP441 buyuk bir DC ve <2 Hz kayma uretiyor (ham -26 dBFS, temizlenince -40):
+    hem enerji olcumunu hem VAD'i hem de modele giden sesi bozuyor.
+    """
+
+    def __init__(self, cutoff_hz: float = 80.0):
+        self._r = 1.0 - 2 * math.pi * cutoff_hz / MIC_RATE
+        self._x = 0.0
+        self._y = 0.0
+
+    def __call__(self, pcm: bytes) -> bytes:
+        samples = array("h", pcm)
+        r, x1, y1 = self._r, self._x, self._y
+        for i, x in enumerate(samples):
+            y1 = x - x1 + r * y1
+            x1 = x
+            samples[i] = max(-32768, min(32767, int(y1)))
+        self._x, self._y = x1, y1
+        return samples.tobytes()
+
+
+class Mic:
+    """Filtrelenmis 20 ms'lik PCM karelerini asyncio kuyruguna yazar."""
+
+    def __init__(self, device: str, highpass_hz: float = 80.0):
         self._device = device
         self._stream = None
+        self._filter = HighPass(highpass_hz)
         self.frames: asyncio.Queue[bytes] = asyncio.Queue(maxsize=100)
 
     def start(self) -> None:
@@ -46,7 +72,7 @@ class Mic:
         def callback(indata, frames, time_info, status):
             if status:
                 log.debug("mic: %s", status)
-            loop.call_soon_threadsafe(push, bytes(indata))
+            loop.call_soon_threadsafe(push, self._filter(bytes(indata)))
 
         self._stream = sd.RawInputStream(
             device=self._device, samplerate=MIC_RATE, channels=1, dtype="int16",

@@ -81,6 +81,9 @@ class LiveBrain:
     async def _calibrate(self) -> None:
         """Acilista ortami dinle; konusma bu taban seviyenin belirgin ustunde olmali."""
         n = max(1, self._cfg["vad"]["calibrate_ms"] // FRAME_MS)
+        # Mikrofonun ilk yarim saniyesi acilis dalgalanmasi: olcume katma
+        for _ in range(500 // FRAME_MS):
+            await self._mic.frames.get()
         frames = [await self._mic.frames.get() for _ in range(n)]
         floor_db = self._gate.calibrate(frames)
         log.info("ortam gurultusu %.1f dBFS; konusma esigi %.1f dBFS",

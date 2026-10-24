@@ -20,14 +20,17 @@ mic = "mic"
 speaker = "speaker"
 # INMP441 yazilim kazanci (-10..30 dB, ~/.asoundrc "Mic Boost"); konusma tepesi 1.0'a dayanirsa dusur
 mic_boost_db = 6
+# INMP441'in DC/dusuk frekans kaymasini temizler; filtre, VAD ve modele giden ses icin
+highpass_hz = 80
 # Robot konusurken mikrofon kapali (AEC yok); konusma bitince bu kadar bekle
 echo_tail_ms = 300
 
 [vad]
 # Acilista ortam bu kadar dinlenir; konusma bu tabanin margin_db ustunde olmali
 calibrate_ms = 2000
-# Kayitlarda: +6 konusmayi en iyi korur, +14 konusmayi da keser; ortam sesi her esikte elendi
-margin_db = 8
+# 80 Hz filtreli seste, -68 dBFS tabanla: +15 uzak gurultuyu (TV, oda) tamamen eler,
+# konusma bolumlerini korur; +8/+12 uzak gurultuyu gecirdi
+margin_db = 15
 # Bu kadar konusma birikmeden modele hicbir sey gitmez; birikmezse ses atilir
 min_speech_ms = 300
 # webrtcvad hassasiyeti 0-3; 3 boguk INMP441'de konusmanin ortasini da kesiyor

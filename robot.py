@@ -55,7 +55,7 @@ def make_camera(cfg: dict) -> Camera | None:
 async def check(cfg: dict) -> None:
     """3 sn kaydet, kac karede konusma oldugunu say, hoparlorden geri cal, kamera karesi al."""
     a, v = cfg["audio"], cfg["vad"]
-    mic, speaker = Mic(a["mic"]), Speaker(a["speaker"], a["echo_tail_ms"])
+    mic, speaker = Mic(a["mic"], a["highpass_hz"]), Speaker(a["speaker"], a["echo_tail_ms"])
     gate = SpeechGate(v["aggressiveness"], v["preroll_ms"], v["hangover_ms"])
     camera = make_camera(cfg)
     if camera:
@@ -108,7 +108,7 @@ async def run(cfg: dict) -> None:
     memory = Memory(ROOT / cfg["memory"]["db"])
     log.info("hafiza: %s", memory.count())
     a = cfg["audio"]
-    mic, speaker = Mic(a["mic"]), Speaker(a["speaker"], a["echo_tail_ms"])
+    mic, speaker = Mic(a["mic"], a["highpass_hz"]), Speaker(a["speaker"], a["echo_tail_ms"])
     camera = make_camera(cfg)
     if camera:
         await camera.start()
