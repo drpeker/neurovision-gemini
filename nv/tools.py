@@ -12,6 +12,7 @@ from .body import SECTIONS, Body
 from .camera import Camera
 from .display import EMOTIONS
 from .memory import CATEGORIES, Memory
+from . import web
 
 log = logging.getLogger(__name__)
 
@@ -87,6 +88,23 @@ DECLARATIONS = [
         }, ["emotion"]),
     ),
     types.FunctionDeclaration(
+        name="weather",
+        description="Bir yerin hava durumunu öğren: şu anki durum ve günlük tahmin. Kullanıcı hava, "
+                    "sıcaklık, yağmur, şemsiye gibi şeyler sorduğunda kullan.",
+        parameters_json_schema=_params({
+            "place": {"type": "string", "description": "Şehir ya da ilçe adı, örneğin 'İzmir'"},
+            "days": {"type": "integer", "description": "Kaç günlük tahmin (1-7); bugün 1, yarın için 2"},
+        }, ["place"]),
+    ),
+    types.FunctionDeclaration(
+        name="wiki",
+        description="Vikipedi'de ara: kişiler, yerler, tarih, bilim gibi ansiklopedik bilgiler. "
+                    "Emin olmadığın bir bilgi sorulduğunda kullan. Güncel haber ve fiyat bulmaz.",
+        parameters_json_schema=_params({
+            "query": {"type": "string", "description": "Aranacak konu"},
+        }, ["query"]),
+    ),
+    types.FunctionDeclaration(
         name="forget",
         description="Kullanıcı bir bilgiyi unutmanı istediğinde o bilgiyi hafızadan sil.",
         parameters_json_schema=_params({
@@ -96,13 +114,44 @@ DECLARATIONS = [
 ]
 
 
+VOLUME_STEP = 15
+
+
 class Tools:
-    def __init__(self, camera: Camera | None, memory: Memory, body: Body):
+    def __init__(self, camera: Camera | None, memory: Memory, body: Body, speaker):
         self._camera = camera
         self._memory = memory
         self._body = body
+        self._speaker = speaker
         self.face = None  # LiveBrain.attach_face
         self.motors = None  # LiveBrain.attach_motors
+        self.radio = None  # LiveBrain.attach_radio
+
+    def declarations(self) -> list[types.FunctionDeclaration]:
+        """Sabit araclar + istasyon listesine gore radyo ve ses duzeyi."""
+        decls = list(DECLARATIONS)
+        decls.append(types.FunctionDeclaration(
+            name="volume",
+            description="Hoparlör ses düzeyini değiştir (robotun sesi ve radyo birlikte). Kullanıcı "
+                        "sesini aç/kıs, daha yüksek/alçak konuş dediğinde kullan.",
+            parameters_json_schema=_params({
+                "action": {"type": "string", "enum": ["artır", "azalt", "ayarla"]},
+                "level": {"type": "integer", "description": "ayarla için 0-100 arası yüzde"},
+            }, ["action"]),
+        ))
+        if self.radio:
+            decls.append(types.FunctionDeclaration(
+                name="radio",
+                description="İnternet radyosunu aç ya da kapat. İstasyonlar: "
+                            + ", ".join(self.radio.stations) + ". Kullanıcı radyo, müzik açmanı "
+                            "ya da kapatmanı istediğinde kullan.",
+                parameters_json_schema=_params({
+                    "action": {"type": "string", "enum": ["aç", "kapat", "liste"]},
+                    "station": {"type": "string", "enum": list(self.radio.stations),
+                                "description": "aç için istasyon"},
+                }, ["action"]),
+            ))
+        return decls
 
     async def handle(self, call: types.FunctionCall) -> types.FunctionResponse:
         args = call.args or {}
@@ -112,6 +161,10 @@ class Tools:
                 return self._look(call)
             if call.name == "body_status":
                 result = await self._body.status(args.get("section", "ozet"))
+            elif call.name in ("weather", "wiki"):
+                result = await getattr(web, call.name)(**args)
+            elif call.name == "radio":
+                result = await self._radio(**args)
             elif call.name in ("move", "stop"):
                 if not self.motors:
                     result = {"error": "Motorlar bağlı değil."}
@@ -125,6 +178,25 @@ class Tools:
             log.warning("arac hatasi %s: %s", call.name, e)
             result = {"error": f"Araç çalışmadı: {e}"}
         return types.FunctionResponse(id=call.id, name=call.name, response=result)
+
+    async def _radio(self, action: str, station: str = "") -> dict:
+        if not self.radio:
+            return {"error": "Radyo yok."}
+        if action == "kapat":
+            return await self.radio.stop()
+        if action == "aç" and station:
+            return await self.radio.play(station)
+        return self.radio.status()
+
+    def _volume(self, action: str, level: int | None = None) -> dict:
+        v = self._speaker.volume
+        if action == "ayarla" and level is not None:
+            v = level
+        elif action in ("artır", "azalt"):
+            v += VOLUME_STEP if action == "artır" else -VOLUME_STEP
+        self._speaker.volume = max(10, v)  # tamamen susarsa robotu duyamazsin
+        self._memory.set("volume", str(self._speaker.volume))
+        return {"ses_düzeyi_%": self._speaker.volume}
 
     def _express(self, emotion: str) -> dict:
         if not self.face:

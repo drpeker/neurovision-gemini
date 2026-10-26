@@ -3,6 +3,9 @@
 [gemini]
 model = "gemini-3.8-live"
 voice = "Kore"
+# Gemini'nin Google aramasi (haber, kur, guncel bilgi). Bu anahtarda kotasi yok (1011 "quota"):
+# faturalandirma acilinca true yap. Hava durumu ve Vikipedi bundan bagimsiz calisir.
+google_search = false
 # Modele giden metin: düzgün Türkçe yaz (Türkçe karakterlerle)
 system_instruction = """
 Sen NeuroVision adında, paletli, kameralı ve mikrofonlu bir ev robotusun.
@@ -18,6 +21,11 @@ Ekranında gözlerin var; söylediğine uygun bir duygu olduğunda express ile y
 Paletlerin var: kullanıcı isterse move ile hareket et, "dur" denirse hemen stop kullan.
 Hareket ederken kısa adımlar at; emin değilsen önce look ile önüne bak.
 Hareket gerekiyorsa izin bekleme, hemen move çağır.
+Hava durumu sorulursa weather kullan; yer söylenmediyse hafızadaki konumu kullan, o da yoksa sor.
+Ansiklopedik bir bilgiden emin değilsen wiki ile ara. Sonuçları kısaca, kendi cümlelerinle söyle.
+Ses düzeyini volume ile değiştir.
+Kendiliğinden bilgi verme: hava durumu, haber gibi şeyleri yalnızca sorulunca söyle.
+Bağlantı yeni açıldığında konuşmaya kendin başlama; kullanıcı konuşunca kısaca cevap ver.
 Anlamsız, başka dilde ya da bağlamsız kısa ses parçalarına cevap verme; anlamadıysan kısaca sor.
 """
 
@@ -35,6 +43,8 @@ mic_boost_db = 12
 highpass_hz = 80
 # Robot konusurken mikrofon kapali (AEC yok); konusma bitince bu kadar bekle
 echo_tail_ms = 300
+# Hoparlor ses duzeyi (%); komutla degisince hafizada saklanir ve bu deger yerine o kullanilir
+volume = 100
 
 [vad]
 # Acilista ortam bu kadar dinlenir; konusma bu tabanin margin_db ustunde olmali
@@ -82,6 +92,11 @@ dim = 25
 dim_after_s = 120
 # Bu sicakliktan sonra gozler turuncu
 hot_c = 75
+# Altta altyazi: son soylenen (gri) ve robotun cevabi (beyaz); sessizlikten hold_s sonra silinir
+captions = true
+caption_lines = 3
+caption_font_px = 15
+caption_hold_s = 8
 
 [motors]
 # L298N, 2S besleme. Pinler ve yonler testle dogrulandi (sol A, sag B kablo ters)
@@ -109,6 +124,21 @@ hot_c = 75
 derate = 0.6
 left = { in1 = 23, in2 = 24, en = 12, invert = false }
 right = { in1 = 27, in2 = 22, en = 13, invert = true }
+
+[radio]
+# Kapali: radyo calarken konusma muzikten guvenilir ayrilamadi (robot takili kaldi)
+enabled = false
+# Muzik konusmaya gore yuksek kaydedilir: radyo robotun sesine gore bu oranda calar.
+# 0.5te mikrofondaki yanki konusmayla ayni seviyedeydi (-26 dBFS): araya girmek zorlasiyor
+level = 0.3
+# Robot konusurken ya da kullanici konusurken radyo bu orana kisilir
+duck = 0.15
+# Radyo calarken konusma sayilmasi icin mikrofon, radyonun yankisinin bu kadar ustunde olmali
+echo_margin_db = 10
+
+# Istasyon adi = yayin adresi (ffmpeg'in actigi her sey: m3u8, mp3, aac)
+[radio.stations]
+"Kafa Radyo" = "https://moondigitaledge2.radyotvonline.net/kafaradyo/playlist.m3u8"
 
 [memory]
 # Pi'de yerel SQLite; git disinda

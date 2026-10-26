@@ -53,14 +53,16 @@ tail -f logs/robot.log                  # canlı log
 |---|---|
 | `robot.py` | Başlatma, log, `--check` |
 | `config.toml` | Model, ses, kişilik, VAD, kamera ayarları |
-| `nv/audio.py` | Mikrofon, hoparlör, mikrofon kazancı |
+| `nv/audio.py` | Mikrofon, hoparlör (ses düzeyi, radyo kanalı karıştırma), mikrofon kazancı |
 | `nv/vad.py` | Yerel konuşma kapısı |
 | `nv/camera.py` | `rpicam-vid` MJPEG → son kare |
 | `nv/live.py` | Gemini Live oturumu, yeniden bağlanma |
-| `nv/tools.py` | Modelin çağırdığı araçlar (`look`, `remember`, `recall`, `forget`, `body_status`) |
+| `nv/tools.py` | Modelin çağırdığı araçlar (`look`, `remember`, `recall`, `forget`, `body_status`, `move`, `stop`, `express`, `weather`, `wiki`, `volume`) |
 | `nv/body.py` | Öz farkındalık (`body_status`): güç, ısı, CPU, RAM, disk, wifi, GPIO, I²C, ışık, ses, alt sistemler, Gemini token kullanımı (`kota`). Yalnızca okur |
-| `nv/display.py` | Robotun yüzü: ST7789 ekranda gözler, durum (dinliyor/düşünüyor/konuşuyor/bakıyor), duygular (`express`), arka ışık |
+| `nv/display.py` | Robotun yüzü: ST7789 ekranda gözler, durum (dinliyor/düşünüyor/konuşuyor/bakıyor), duygular (`express`), altta altyazı, arka ışık |
 | `nv/motors.py` | Paletler (L298N): `move`/`stop`, yumuşak kalkış/duruş, 3 sn sınır, bağlantı kopunca durma, hareket sırasında mikrofon susturma |
+| `nv/web.py` | Hava durumu (Open-Meteo) ve Vikipedi araması; anahtarsız |
+| `nv/radio.py` | İnternet radyosu (ffmpeg). Şimdilik kapalı: `[radio] enabled = false` |
 | `nv/debug.py` | Teşhis: son 10 konuşmanın sesi ve oturum talimatı (`logs/debug/`) |
 | `nv/memory.py` | SQLite hafıza: döküm, özetler, kalıcı bilgiler |
 | `nv/summarizer.py` | Sessizlikte özet + otomatik bilgi çıkarma |

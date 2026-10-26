@@ -104,6 +104,8 @@ class Body:
         self._margin = cfg["vad"]["margin_db"]
         self._started = time.monotonic()
         self.connected_since: float | None = None  # LiveBrain doldurur
+        self.speaker = None  # LiveBrain doldurur
+        self.radio = None  # LiveBrain.attach_radio
         self._pin_names = {int(k): v for k, v in self._cfg["pin_names"].items()}
         self._reserved = {int(k): v for k, v in self._cfg["reserved_pins"].items()}
 
@@ -199,8 +201,13 @@ class Body:
                 "ölçüm_yaşı_sn": round(time.monotonic() - self._camera.meta_at, 1)}
 
     def _sound(self) -> dict:
-        return {"ortam_tabanı_dBFS": round(self._gate.floor_db, 1),
-                "konuşma_eşiği_dBFS": round(self._gate.floor_db + self._margin, 1)}
+        out = {"ortam_tabanı_dBFS": round(self._gate.floor_db, 1),
+               "konuşma_eşiği_dBFS": round(self._gate.floor_db + self._margin, 1)}
+        if self.speaker:
+            out["hoparlör_ses_düzeyi_%"] = self.speaker.volume
+        if self.radio:
+            out["radyo"] = self.radio.playing or "kapalı"
+        return out
 
     def _systems(self) -> dict:
         cam_age = time.monotonic() - self._camera.latest_at if self._camera and self._camera.latest else None

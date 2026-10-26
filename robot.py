@@ -16,6 +16,7 @@ from pathlib import Path
 
 from nv.audio import Mic, Speaker, set_mic_boost
 from nv.camera import Camera
+from nv.radio import Radio
 from nv.vad import SpeechGate
 
 ROOT = Path(__file__).resolve().parent
@@ -107,15 +108,23 @@ async def run(cfg: dict) -> None:
 
     memory = Memory(ROOT / cfg["memory"]["db"])
     log.info("hafiza: %s", memory.count())
-    a = cfg["audio"]
-    mic, speaker = Mic(a["mic"], a["highpass_hz"]), Speaker(a["speaker"], a["echo_tail_ms"])
+    a, r = cfg["audio"], cfg["radio"]
+    # Komutla degistirilen ses duzeyi hafizada saklanir, yeniden baslayinca korunur
+    volume = int(memory.get("volume") or a["volume"])
+    mic = Mic(a["mic"], a["highpass_hz"])
+    speaker = Speaker(a["speaker"], a["echo_tail_ms"], volume, r["level"], r["duck"])
     camera = make_camera(cfg)
     if camera:
         await camera.start()
     speaker.start()
     mic.start()
     brain = LiveBrain(cfg, key, mic, speaker, camera, memory)
+    radio = Radio(speaker, r["stations"]) if r["enabled"] else None
+    if radio:
+        brain.attach_radio(radio)
     face = await make_face(cfg, speaker, brain)
+    if face:
+        face.radio = radio
     motors = make_motors(cfg, brain)
 
     task = asyncio.create_task(brain.run(), name="brain")
@@ -130,6 +139,8 @@ async def run(cfg: dict) -> None:
     finally:
         if motors:
             motors.close()  # once motorlar: her durumda dur
+        if radio:
+            await radio.stop()
         mic.stop()
         speaker.stop()
         if camera:

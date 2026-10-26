@@ -1,8 +1,8 @@
-"""Robotun yuzu: ST7789 SPI ekranda gozler, durum ve duygu.
+"""Robotun yuzu: ST7789 SPI ekranda gozler, durum, duygu ve altta altyazi.
 
-Cizim saf Python: her satir icin "acik araliklar" (span) hesaplanir ve bytearray dilimine
-tek seferde yazilir; numpy/PIL yok. Sadece degisen satirlar gonderilir, SPI yazimi ayri bir
-is parcaciginda (ses akisi beklemez). Hareket yokken kare cizilmez.
+Yuz cizimi saf Python: her satir icin "acik araliklar" (span) hesaplanir ve bytearray dilimine
+tek seferde yazilir. Altyazi PIL ile yalnizca metin degisince cizilir. Sadece degisen satirlar
+gonderilir, SPI yazimi ayri bir is parcaciginda (ses akisi beklemez). Hareket yokken kare cizilmez.
 """
 
 import asyncio
@@ -28,7 +28,9 @@ COLORS = {
     "eye": (40, 210, 255), "listen": (60, 255, 210), "offline": (90, 90, 100),
     "hot": (255, 150, 30), "flash": (255, 255, 255), "accent": (40, 210, 255),
     "ok": (40, 220, 90), "warn": (255, 200, 0), "bad": (255, 50, 40),
+    "user": (150, 150, 165), "robot": (225, 240, 255), "radio": (40, 210, 255),
 }
+FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
 
 
 class Panel:
@@ -120,6 +122,44 @@ class Canvas:
                 self.span(y, a, b, color)
 
 
+class Captions:
+    """Alt seritte son konusma: kullanici gri, robot beyaz. Sigmazsa son satirlar gorunur."""
+
+    def __init__(self, w: int, lines: int, font_px: int):
+        from PIL import ImageFont
+        try:
+            self._font = ImageFont.truetype(FONT, font_px)
+        except OSError:
+            self._font = ImageFont.load_default(font_px)
+        self.w, self.lines, self.line_h = w, lines, font_px + 5
+        self.h = lines * self.line_h
+
+    def _wrap(self, text: str) -> list[str]:
+        out, line = [], ""
+        for word in text.split():
+            test = f"{line} {word}" if line else word
+            if self._font.getlength(test) <= self.w - 12:
+                line = test
+            else:
+                if line:
+                    out.append(line)
+                line = word
+        if line:
+            out.append(line)
+        return out[-self.lines:]
+
+    def render(self, text: str, color: tuple[int, int, int]) -> bytes:
+        """Metni seritin RGB565 baytlarina cevir (is parcaciginda calisir)."""
+        from PIL import Image, ImageDraw
+        img = Image.new("L", (self.w, self.h))
+        draw = ImageDraw.Draw(img)
+        for i, line in enumerate(self._wrap(text)):
+            draw.text((self.w / 2, i * self.line_h + 2), line, font=self._font, fill=255, anchor="ma")
+        # Kenar yumusatma: gri seviyeyi renge olcekle
+        lut = [rgb(*(c * v // 255 for c in color)) for v in range(256)]
+        return b"".join(lut[v] for v in img.tobytes())
+
+
 class Face:
     """Durumu robotun parcalarindan okur, yuzu cizer. LiveBrain yalnizca thinking/flash/emotion verir."""
 
@@ -130,7 +170,12 @@ class Face:
         self._canvas = Canvas(panel.w, panel.h)
         self._pool = ThreadPoolExecutor(1, thread_name_prefix="display")
         w, h = panel.w, panel.h
-        self._cx, self._cy = w / 2, h * 0.47
+        self._captions = (Captions(w, cfg["caption_lines"], cfg["caption_font_px"])
+                          if cfg.get("captions") else None)
+        # Altyazi varsa yuz yukari kayar, altta serit acilir
+        self._cap_top = h - self._captions.h - 4 if self._captions else h
+        self._face_y = (34, self._cap_top - 1) if self._captions else (40, h - 30)
+        self._cx, self._cy = w / 2, h * (0.40 if self._captions else 0.47)
         self._eye_w, self._eye_h, self._gap = w * 0.25, h * 0.27, w * 0.15
         # yumusak gecis yapilan parametreler: bakis, olcek, goz acikligi
         self._cur = {"dx": 0.0, "dy": 0.0, "sw": 1.0, "sh": 1.0}
@@ -145,6 +190,11 @@ class Face:
         self._bright = None
         self._temp, self._temp_at = 0.0, 0.0
         self._status_key = None
+        self._caption = ("", "user")
+        self._caption_at = 0.0
+        self._caption_shown = None
+        self._caption_drawn_at = 0.0
+        self.radio = None  # robot.py baglar: altyazi yokken calan istasyon gorunur
         self._task = None
 
     # --- LiveBrain'den ---
@@ -159,6 +209,11 @@ class Face:
 
     def poke(self) -> None:
         self._last_active = time.monotonic()
+
+    def caption(self, text: str, who: str) -> None:
+        """who: "user" ya da "robot". Metin akarken her parcada tamami verilir."""
+        self._caption = (text.strip(), who)
+        self._caption_at = time.monotonic()
 
     # --- dongu ---
     async def start(self) -> None:
@@ -203,6 +258,7 @@ class Face:
                 self._last_active = now
             await self._backlight(now)
             await self._status(now)
+            await self._draw_caption(now)
             self._update_targets(state, now)
             moving = self._tween()
             animated = state in ("speaking", "thinking", "listening", "looking") or self._blink_t >= 0
@@ -273,7 +329,7 @@ class Face:
 
     def _draw(self, state: str, now: float) -> tuple[int, int]:
         c, cur = self._canvas, self._cur
-        y0, y1 = 40, self._panel.h - 30
+        y0, y1 = self._face_y
         c.clear_rows(y0, y1)
         hot = self._temp >= self._cfg["hot_c"]
         name = {"offline": "offline", "looking": "flash", "listening": "listen"}.get(state, "eye")
@@ -319,6 +375,25 @@ class Face:
         c.circle(36, 18, 6, rgb(*COLORS["ok" if online else "bad"]))
         c.circle(self._panel.w - 36, 18, 6, rgb(*COLORS[level]))
         await self._run_panel(self._panel.blit, c.buf, 8, 28)
+
+    async def _draw_caption(self, now: float) -> None:
+        if not self._captions:
+            return
+        text, who = self._caption
+        if text and now - self._caption_at > self._cfg["caption_hold_s"]:
+            text = ""
+        if not text and self.radio and self.radio.playing:
+            text, who = f"♪ {self.radio.playing}", "radio"
+        # Akan metinde her parcada degil, en fazla 0.15 sn'de bir ciz
+        if (text, who) == self._caption_shown or now - self._caption_drawn_at < 0.15:
+            return
+        self._caption_shown, self._caption_drawn_at = (text, who), now
+        data = await asyncio.get_running_loop().run_in_executor(
+            self._pool, self._captions.render, text, COLORS[who])
+        row = self._panel.w * 2
+        self._canvas.buf[self._cap_top * row:self._cap_top * row + len(data)] = data
+        await self._run_panel(self._panel.blit, self._canvas.buf, self._cap_top,
+                              self._cap_top + self._captions.h - 1)
 
     async def _backlight(self, now: float) -> None:
         want = (self._cfg["bright"] if now - self._last_active < self._cfg["dim_after_s"]

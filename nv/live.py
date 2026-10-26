@@ -14,7 +14,7 @@ from .camera import Camera
 from .debug import DebugRecorder
 from .memory import Memory
 from .summarizer import consolidate
-from .tools import DECLARATIONS, Tools
+from .tools import Tools
 from .vad import SpeechGate
 
 log = logging.getLogger(__name__)
@@ -33,9 +33,10 @@ class LiveBrain:
         self._memory = memory
         v = cfg["vad"]
         self.gate = SpeechGate(v["aggressiveness"], v["preroll_ms"], v["hangover_ms"],
-                               v["min_speech_ms"], v["margin_db"])
+                               v["min_speech_ms"], v["margin_db"], cfg["radio"]["echo_margin_db"])
         self.body = Body(cfg, camera, self.gate, memory)
-        self._tools = Tools(camera, memory, self.body)
+        self.body.speaker = speaker
+        self._tools = Tools(camera, memory, self.body, speaker)
         self.face = None  # attach_face ile (nv.display.Face)
         self.motors = None  # attach_motors ile (nv.motors.Motors)
         self._frame_on_speech = cfg["camera"]["enabled"] and cfg["camera"]["frame_on_speech"]
@@ -55,6 +56,10 @@ class LiveBrain:
     def attach_motors(self, motors) -> None:
         self.motors = motors
         self._tools.motors = motors
+
+    def attach_radio(self, radio) -> None:
+        self._tools.radio = radio
+        self.body.radio = radio
 
     def _instruction(self) -> str:
         m = self._cfg["memory"]
@@ -79,8 +84,15 @@ class LiveBrain:
             input_audio_transcription=types.AudioTranscriptionConfig(),
             output_audio_transcription=types.AudioTranscriptionConfig(),
             media_resolution=types.MediaResolution.MEDIA_RESOLUTION_LOW,
-            tools=[types.Tool(function_declarations=DECLARATIONS)],
+            tools=self._tool_list(),
         )
+
+    def _tool_list(self) -> list[types.Tool]:
+        tools = [types.Tool(function_declarations=self._tools.declarations())]
+        if self._cfg["gemini"].get("google_search"):
+            # Sunucuda calisir, arac cagrisi bize gelmez; ucretsiz katmanda kotasi yok
+            tools.append(types.Tool(google_search=types.GoogleSearch()))
+        return tools
 
     async def run(self) -> None:
         await self._calibrate()
@@ -174,7 +186,10 @@ class LiveBrain:
                 self.gate.reset()
                 continue
 
-            frames, event = self.gate.feed(frame)
+            # Radyo caliyorsa seviyesi: radyonun yankisi konusma sayilmasin
+            frames, event = self.gate.feed(frame, self._speaker.radio_level_db())
+            if self.gate.active or event:
+                self._speaker.duck(3)  # kullanici konusurken radyo kisik
             if event == "start":
                 log.info("konusma onaylandi, modele gonderiliyor")
                 if self._rec:
@@ -225,10 +240,17 @@ class LiveBrain:
                     self._speaker.play(part.inline_data.data)
                     if self.face:
                         self.face.thinking = False
+        gm = sc.grounding_metadata
+        if gm and gm.web_search_queries:
+            log.info("web aramasi: %s", ", ".join(gm.web_search_queries))
         if sc.input_transcription and sc.input_transcription.text:
             self._heard.append(sc.input_transcription.text)
+            if self.face:
+                self.face.caption("".join(self._heard), "user")
         if sc.output_transcription and sc.output_transcription.text:
             self._said.append(sc.output_transcription.text)
+            if self.face:
+                self.face.caption("".join(self._said), "robot")
         if sc.turn_complete:
             if self.face:
                 self.face.thinking = False

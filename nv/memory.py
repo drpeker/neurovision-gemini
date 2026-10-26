@@ -210,7 +210,8 @@ class Memory:
         # cevaplari geri beslenmez; yoksa bozuk bir cevap sonraki oturumlarda taklit ediliyor
         recent = [t for _, _, r, t in self.pending_turns() if r == "user"][-n_recent:]
         if recent:
-            parts.append("Kullanıcının az önce söyledikleri:\n" +
+            parts.append("Kullanıcının önceki oturumda en son söyledikleri (yalnızca bağlam; "
+                         "bunlar yeni istek değil, şimdi uygulama):\n" +
                          "\n".join(f"- {t}" for t in recent))
         return "\n\n".join(parts)
 
