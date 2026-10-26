@@ -126,7 +126,7 @@ async def run(cfg: dict) -> None:
     face = await make_face(cfg, speaker, brain)
     if face:
         face.radio = radio
-    motors = make_motors(cfg, brain)
+    motors = make_motors(cfg, brain, memory)
 
     task = asyncio.create_task(brain.run(), name="brain")
     stop_target = []
@@ -164,7 +164,7 @@ async def run(cfg: dict) -> None:
             log.warning("Pi kapatilamadi (deploy/allow-poweroff.sh calistirildi mi?): %s", r.stderr.strip())
 
 
-def make_motors(cfg: dict, brain):
+def make_motors(cfg: dict, brain, memory):
     """Motor surucusu acilmazsa robot hareketsiz calismaya devam eder."""
     if not cfg["motors"]["enabled"]:
         return None
@@ -174,6 +174,10 @@ def make_motors(cfg: dict, brain):
     except Exception as e:
         log.warning("motorlar acilamadi, hareketsiz devam: %s", e)
         return None
+    # Sesle degistirilen hiz duzeyi hafizada saklanir
+    saved = memory.get("motor_speed")
+    if saved:
+        motors.speed_level = int(saved)
     brain.attach_motors(motors)
     return motors
 

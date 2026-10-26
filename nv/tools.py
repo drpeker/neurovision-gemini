@@ -53,27 +53,28 @@ DECLARATIONS = [
         name="body_status",
         description="Kendi donanım durumunu ölç: güç/voltaj, işlemci ısısı, CPU, bellek, disk, "
                     "wifi ve bağlantı, GPIO pinleri, I2C'ye bağlı cihazlar, ortam ışığı, ortam ses "
-                    "düzeyi, hoparlör ses düzeyi, kamera ve sistemler, Gemini token kullanımı (kota). Kullanıcı nasıl "
+                    "düzeyi, hoparlör ses düzeyi, motor hız düzeyi, kamera ve sistemler, Gemini token kullanımı (kota). Kullanıcı nasıl "
                     "olduğunu, ısını, pilini/gücünü, pinlerini, sensörlerini, ne kadar kota/token "
                     "harcadığını sorduğunda kullan. 'uyarılar' boş değilse söyle.",
         parameters_json_schema=_params({
             "section": {"type": "string", "enum": SECTIONS,
                         "description": "ozet: genel durum (varsayılan). Belirli bir soru için ilgili "
-                                       "bölümü seç: gpio, i2c, guc, isi, cpu, ram, disk, ag, isik, ses, "
+                                       "bölümü seç: gpio, i2c, guc, isi, cpu, ram, disk, ag, isik, ses, motor, "
                                        "sistemler, kota (token kullanımı); hepsi: tümü"},
         }, []),
     ),
     types.FunctionDeclaration(
         name="move",
         description="Paletlerle hareket et. Kullanıcı ileri/geri gitmeni ya da sağa/sola dönmeni "
-                    "istediğinde kullan. Bir hareket en fazla 3 saniye sürer; daha uzun yol için "
-                    "adım adım ilerle ve gerekirse look ile önüne bak. Hareket ederken mikrofonun "
-                    "kapalıdır.",
+                    "istediğinde kullan. 'Hafifçe/biraz' kısa süre (0.3 sn), 'yavaşça' speed=yavaş, "
+                    "'çok yavaş' speed=çok yavaş demektir; ikisi birlikte de olabilir. Bir hareket en "
+                    "fazla 3 saniye sürer; daha uzun yol için adım adım ilerle ve gerekirse look ile "
+                    "önüne bak. Hareket ederken mikrofonun kapalıdır.",
         parameters_json_schema=_params({
             "direction": {"type": "string", "enum": ["ileri", "geri", "sol", "sag"],
                           "description": "sol/sag: yerinde dönüş"},
-            "seconds": {"type": "number", "description": "0.2 ile 3 arası saniye; dönüşte 1 sn ≈ çeyrek tur"},
-            "speed": {"type": "string", "enum": ["yavaş", "normal", "hızlı"]},
+            "seconds": {"type": "number", "description": "0.25 ile 3 arası saniye; hafifçe 0.3, normal 1"},
+            "speed": {"type": "string", "enum": ["çok yavaş", "yavaş", "normal", "hızlı"]},
         }, ["direction", "seconds"]),
     ),
     types.FunctionDeclaration(
@@ -118,7 +119,7 @@ DECLARATIONS = [
 
 VOLUME_STEP = 15
 # Yanlis duyulan (yabanci dil/gurultu) bir sozle yapilmamasi gereken isler
-GUARDED = {"move", "remember", "forget", "volume", "shutdown"}
+GUARDED = {"move", "remember", "forget", "volume", "shutdown", "motor_speed"}
 
 
 class Tools:
@@ -145,6 +146,18 @@ class Tools:
                 "level": {"type": "integer", "description": "ayarla için 0-100 arası yüzde"},
             }, ["action"]),
         ))
+        if self.motors:
+            decls.append(types.FunctionDeclaration(
+                name="motor_speed",
+                description="Motor hız düzeyini öğren ya da değiştir; tüm hareketleri çarpar. Kullanıcı "
+                            "'motor hızın kaç', 'daha yavaş/hızlı hareket et', 'motor hızını yüzde 50 "
+                            "yap' dediğinde kullan. Tek bir hareketi yavaşlatmak için move'un speed "
+                            "seçeneğini kullan, bunu değil.",
+                parameters_json_schema=_params({
+                    "action": {"type": "string", "enum": ["sor", "artır", "azalt", "ayarla"]},
+                    "level": {"type": "integer", "description": "ayarla için 20-100 arası yüzde"},
+                }, ["action"]),
+            ))
         if self.on_shutdown:
             decls.append(types.FunctionDeclaration(
                 name="shutdown",
@@ -190,6 +203,8 @@ class Tools:
                 result = await self._radio(**args)
             elif call.name == "shutdown":
                 result = self._shutdown(**args)
+            elif call.name == "motor_speed":
+                result = self._motor_speed(**args)
             elif call.name in ("move", "stop"):
                 if not self.motors:
                     result = {"error": "Motorlar bağlı değil."}
@@ -232,6 +247,17 @@ class Tools:
             await asyncio.sleep(0.1)
         log.info("kapatma: %s", target)
         self.on_shutdown(target)
+
+    def _motor_speed(self, action: str, level: int | None = None) -> dict:
+        if not self.motors:
+            return {"error": "Motorlar bağlı değil."}
+        if action == "ayarla" and level is not None:
+            self.motors.speed_level = level
+        elif action in ("artır", "azalt"):
+            self.motors.speed_level += 10 if action == "artır" else -10
+        if action != "sor":
+            self._memory.set("motor_speed", str(self.motors.speed_level))
+        return self.motors.status()
 
     def _volume(self, action: str, level: int | None = None) -> dict:
         v = self._speaker.volume

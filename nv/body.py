@@ -32,7 +32,7 @@ THROTTLE_BITS = {
     16: "düşük voltaj", 17: "frekans sınırlandı", 18: "kısıtlandı", 19: "yumuşak ısı sınırı",
 }
 SECTIONS = ["ozet", "guc", "isi", "cpu", "ram", "disk", "ag", "gpio", "i2c", "isik", "ses",
-            "sistemler", "kota", "hepsi"]
+            "motor", "sistemler", "kota", "hepsi"]
 USAGE_LABELS = {"in_TEXT": "giriş_metin", "in_AUDIO": "giriş_ses", "in_IMAGE": "giriş_görüntü",
                 "in_VIDEO": "giriş_video", "out_AUDIO": "çıkış_ses", "out_TEXT": "çıkış_metin"}
 SOURCE_LABELS = {"live": "sohbet (Gemini Live)", "ozet": "hafıza özeti (Flash-Lite)"}
@@ -106,6 +106,7 @@ class Body:
         self.connected_since: float | None = None  # LiveBrain doldurur
         self.speaker = None  # LiveBrain doldurur
         self.radio = None  # LiveBrain.attach_radio
+        self.motors = None  # LiveBrain.attach_motors
         self._pin_names = {int(k): v for k, v in self._cfg["pin_names"].items()}
         self._reserved = {int(k): v for k, v in self._cfg["reserved_pins"].items()}
 
@@ -209,6 +210,9 @@ class Body:
             out["radyo"] = self.radio.playing or "kapalı"
         return out
 
+    def _motor(self) -> dict:
+        return self.motors.status() if self.motors else {"durum": "motorlar bağlı değil"}
+
     def _systems(self) -> dict:
         cam_age = time.monotonic() - self._camera.latest_at if self._camera and self._camera.latest else None
         return {"kamera": "yok" if cam_age is None else
@@ -239,10 +243,11 @@ class Body:
         parts = {
             "guc": self._power, "isi": self._temp, "cpu": self._cpu, "ram": self._ram,
             "disk": self._disk, "ag": self._net, "gpio": self._gpio, "i2c": self._i2c,
-            "isik": self._light, "ses": self._sound, "sistemler": self._systems, "kota": self._usage,
+            "isik": self._light, "ses": self._sound, "motor": self._motor, "sistemler": self._systems,
+            "kota": self._usage,
         }
         if section == "ozet":
-            wanted = ["guc", "isi", "cpu", "ram", "disk", "ag", "isik", "ses", "sistemler"]
+            wanted = ["guc", "isi", "cpu", "ram", "disk", "ag", "isik", "ses", "motor", "sistemler"]
         elif section == "hepsi":
             wanted = list(parts)
         else:

@@ -106,20 +106,26 @@ caption_font_px = 15
 caption_hold_s = 8
 
 [motors]
-# L298N, 2S besleme. Pinler ve yonler testle dogrulandi (sol A, sag B kablo ters)
+# MX1508 (EN yok, PWM IN pinlerinde), 2S besleme. Pinler ve yonler testle dogrulandi
+# (sol A, sag B kablo ters). L298N'e donulurse driver = "l298n" (en pinleri kullanilir).
 enabled = true
+driver = "mx1508"
+# Hiz duzeyi (%): asagidaki tum hizlari carpar; sesle degisince hafizada saklanir
+speed_level = 80
 pwm_hz = 200
 # Yumusak kalkis/durus: guc ramp_start'tan hedefe ramp_up_ms'de cikar, sonda ramp_down_ms'de iner.
-# ramp_start yerde kalkis esiginin hemen alti: %25'te kisa hareketler hic kalkmiyordu.
-# Ani akim 2S bataryanin korumasini attirabiliyor; kalkis yumusak kalsin
-ramp_start = 35
+# ramp_start yerde kalkis esiginin hemen alti. Ani akim 2S bataryanin korumasini
+# attirabiliyor; kalkis yumusak kalsin. (L298N'de 35 idi; MX1508 ~2 V daha fazla verir)
+ramp_start = 22
 ramp_up_ms = 500
 ramp_down_ms = 300
-# Hiz (%): duz / donus / tavan / taban (L298N'de ~%35 altinda yerde kalkmiyor)
-drive_speed = 42
-turn_speed = 50
+# Hiz (%), duzey %100'de: duz / donus / tavan / taban. L298N'deki begenilen hizlarin
+# (42/50) MX1508 karsiligi: L298N ~2 V yiyordu, ayni motor gerilimi icin daha az PWM gerekir.
+# Tavan: 2S (8.4 V) x %70 ~ 6 V motor siniri. Taban: yerde kalkis esigi (tahmin, testle ayarla)
+drive_speed = 32
+turn_speed = 38
 max_speed = 70
-min_speed = 35
+min_speed = 22
 max_seconds = 3.0
 # En kisa hareket; model "biraz" icin 0.2 sn seciyor
 min_seconds = 0.25
@@ -129,6 +135,7 @@ mute_tail_ms = 400
 # Bu sicaklikta ya da dusuk voltajda hiz bu oranla carpilir
 hot_c = 75
 derate = 0.6
+# en: yalnizca L298N'de kullanilir; MX1508'de GPIO12/13 bos
 left = { in1 = 23, in2 = 24, en = 12, invert = false }
 right = { in1 = 27, in2 = 22, en = 13, invert = true }
 
@@ -183,12 +190,10 @@ i2c_buses = [1]
 
 # Pin planimizdaki gorevler (henuz takili olmayanlar "planlı")
 [body.pin_names]
-12 = "sol motor ENA (PWM)"
-13 = "sağ motor ENB (PWM)"
-22 = "sağ motor IN4"
-23 = "sol motor IN1"
-24 = "sol motor IN2"
-27 = "sağ motor IN3"
+22 = "sağ motor IN4 (MX1508, PWM)"
+23 = "sol motor IN1 (MX1508, PWM)"
+24 = "sol motor IN2 (MX1508, PWM)"
+27 = "sağ motor IN3 (MX1508, PWM)"
 25 = "ekran DC"
 5 = "ekran RST"
 8 = "ekran CS (SPI CE0)"

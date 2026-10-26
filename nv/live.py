@@ -58,6 +58,7 @@ class LiveBrain:
     def attach_motors(self, motors) -> None:
         self.motors = motors
         self._tools.motors = motors
+        self.body.motors = motors
 
     def attach_shutdown(self, fn) -> None:
         self._tools.on_shutdown = fn

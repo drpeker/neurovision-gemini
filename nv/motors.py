@@ -1,4 +1,7 @@
-"""Palet motorlari (L298N). Guvenlik kurallari burada, modelin kararina birakilmaz.
+"""Palet motorlari (MX1508 ya da L298N). Guvenlik kurallari burada, modelin kararina birakilmaz.
+
+MX1508'de EN yok: hiz, yone gore IN1 ya da IN2'ye verilen PWM ile ayarlanir, digeri 0.
+L298N'de yon IN'lerde, PWM EN'de. Tum hizlar hiz duzeyiyle (%, sesle ayarlanir) carpilir.
 
 - her hareket en fazla max_seconds; yeni komut eskisini iptal eder
 - yon degisirken once dur, kisa bekle
@@ -18,7 +21,7 @@ log = logging.getLogger(__name__)
 
 # yon -> (sol, sag) palet yonu
 MOVES = {"ileri": (1, 1), "geri": (-1, -1), "sol": (-1, 1), "sag": (1, -1)}
-SPEEDS = {"yavaş": 0.8, "normal": 1.0, "hızlı": 1.25}
+SPEEDS = {"çok yavaş": 0.6, "yavaş": 0.8, "normal": 1.0, "hızlı": 1.25}
 RAMP_STEP_S = 0.025  # rampada guc guncelleme araligi
 
 
@@ -29,15 +32,40 @@ class Motors:
         self._cfg = cfg
         self._h = lgpio.gpiochip_open(0)
         self._sides = {"sol": cfg["left"], "sag": cfg["right"]}
+        self._mx = cfg["driver"] == "mx1508"
         for side in self._sides.values():
-            for key in ("in1", "in2", "en"):
+            for key in ("in1", "in2") if self._mx else ("in1", "in2", "en"):
                 lgpio.gpio_claim_output(self._h, side[key], 0)
+        self._pwm_pin: dict[int, int | None] = {}  # MX1508: taraf (in1) -> PWM verilen pin
+        self.speed_level = cfg["speed_level"]
         self._task: asyncio.Task | None = None
         self._prev_dir: tuple[int, int] = (0, 0)  # son hareketin yonu (durunca sifirlanmaz)
         self._stopped_at = 0.0
         self._moving_until = 0.0
         self._quiet_until = 0.0
-        log.info("motorlar hazir (sol A, sag B%s)", " ters" if cfg["right"]["invert"] else "")
+        log.info("motorlar hazir: %s, hiz duzeyi %%%d (sol A, sag B%s)", cfg["driver"],
+                 self.speed_level, " ters" if cfg["right"]["invert"] else "")
+
+    @property
+    def speed_level(self) -> int:
+        return self._level
+
+    @speed_level.setter
+    def speed_level(self, percent: int) -> None:
+        self._level = max(20, min(100, int(percent)))
+
+    def duty(self, direction: str, speed: str = "normal") -> float:
+        """Hedef PWM (%): taban hiz x hiz secenegi x hiz duzeyi, tavan ve taban sinirli."""
+        c = self._cfg
+        base = c["turn_speed"] if direction in ("sol", "sag") else c["drive_speed"]
+        duty = min(c["max_speed"], base * SPEEDS.get(speed, 1.0) * self._level / 100)
+        return max(duty, c["min_speed"])
+
+    def status(self) -> dict:
+        return {"sürücü": self._cfg["driver"].upper(), "hız_düzeyi_%": self._level,
+                "hareket_ediyor": self.busy,
+                "düz_gidiş_gücü_%": round(self.duty("ileri")), "dönüş_gücü_%": round(self.duty("sol")),
+                "not": "Hız düzeyi tüm hareketleri çarpar; yavaş/hızlı seçenekleri bunun üstüne uygulanır."}
 
     @property
     def busy(self) -> bool:
@@ -45,7 +73,32 @@ class Motors:
         return time.monotonic() < max(self._moving_until, self._quiet_until)
 
     # --- dusuk seviye ---
+    def _free(self, pin: int) -> None:
+        # tx_pwm(..., 0) arka planda calismaya devam edip sonraki yazmalari eziyor: pini birak
+        self._lg.gpio_free(self._h, pin)
+        self._lg.gpio_claim_output(self._h, pin, 0)
+
+    def _drive_mx(self, side: dict, direction: int, duty: float) -> None:
+        a, b = side["in1"], side["in2"]
+        if direction == 0 or duty <= 0:
+            self._free(a)
+            self._free(b)
+            self._pwm_pin[a] = None
+            return
+        if side["invert"]:
+            direction = -direction
+        on = a if direction > 0 else b
+        if self._pwm_pin.get(a) != on:
+            # Yon degisti ya da yeni basliyor: iki pin de temiz 0'dan baslasin
+            self._free(a)
+            self._free(b)
+            self._pwm_pin[a] = on
+        self._lg.tx_pwm(self._h, on, self._cfg["pwm_hz"], min(100.0, duty))
+
     def _drive(self, side: dict, direction: int, duty: float) -> None:
+        if self._mx:
+            self._drive_mx(side, direction, duty)
+            return
         if direction == 0 or duty <= 0:
             # tx_pwm(..., 0) arka planda calismaya devam edip sonraki yazmalari eziyor: pini birak
             self._lg.gpio_free(self._h, side["en"])
@@ -102,9 +155,7 @@ class Motors:
         c = self._cfg
         # Cok kisa hareket rampada kaybolur, palet yerde kalkmaz: en az min_seconds
         seconds = max(c["min_seconds"], min(float(seconds), c["max_seconds"]))
-        base = c["turn_speed"] if direction in ("sol", "sag") else c["drive_speed"]
-        duty = min(c["max_speed"], base * SPEEDS.get(speed, 1.0)) * self._derate()
-        duty = max(duty, c["min_speed"])
+        duty = max(self.duty(direction, speed) * self._derate(), c["min_speed"])
         await self._cancel()
         self._moving_until = time.monotonic() + seconds + 0.5
         self._task = asyncio.create_task(self._run(MOVES[direction], seconds, duty), name="motor")
@@ -124,9 +175,10 @@ class Motors:
             if up + down > seconds * 0.6:
                 k = seconds * 0.6 / (up + down)
                 up, down = up * k, down * k
-            await self._ramp(dirs, c["ramp_start"], duty, up)
+            start = min(c["ramp_start"], duty)
+            await self._ramp(dirs, start, duty, up)
             await asyncio.sleep(seconds - up - down)
-            await self._ramp(dirs, duty, c["ramp_start"], down)
+            await self._ramp(dirs, duty, start, down)
         finally:
             self.halt()
 
