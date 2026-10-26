@@ -127,6 +127,7 @@ async def run(cfg: dict) -> None:
     if face:
         face.radio = radio
     motors = make_motors(cfg, brain, memory)
+    tracker = make_tracker(cfg, camera, motors, brain, face)
 
     task = asyncio.create_task(brain.run(), name="brain")
     stop_target = []
@@ -145,6 +146,8 @@ async def run(cfg: dict) -> None:
     except asyncio.CancelledError:
         pass
     finally:
+        if tracker:
+            await tracker.stop()
         if motors:
             motors.close()  # once motorlar: her durumda dur
         if radio:
@@ -162,6 +165,23 @@ async def run(cfg: dict) -> None:
         r = subprocess.run(["sudo", "-n", "systemctl", "poweroff"], capture_output=True, text=True)
         if r.returncode:
             log.warning("Pi kapatilamadi (deploy/allow-poweroff.sh calistirildi mi?): %s", r.stderr.strip())
+
+
+def make_tracker(cfg: dict, camera, motors, brain, face):
+    """Nesne takibi: kamera, motor ve model dosyasi varsa."""
+    v = cfg["vision"]
+    model = ROOT / v["model"]
+    if not (v["enabled"] and camera and motors):
+        return None
+    if not model.exists():
+        log.warning("nesne takibi kapali: model yok (%s); deploy/get-model.sh", model)
+        return None
+    from nv.tracker import Tracker
+    from nv.vision import Detector
+    tracker = Tracker(v, camera, motors, Detector(model, v["threads"], v["threshold"]))
+    tracker.face = face
+    brain.attach_tracker(tracker)
+    return tracker
 
 
 def make_motors(cfg: dict, brain, memory):
