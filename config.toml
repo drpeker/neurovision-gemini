@@ -97,8 +97,8 @@ turn_speed = 50
 max_speed = 70
 min_speed = 35
 max_seconds = 3.0
-# Model "biraz" icin 0.2 sn seciyor; bu kadar kisa hareket yerde hic kalkmiyor
-min_seconds = 0.6
+# En kisa hareket; model "biraz" icin 0.2 sn seciyor
+min_seconds = 0.25
 reverse_pause_ms = 150
 # Motor durduktan sonra mikrofon bu kadar daha kapali (ms)
 mute_tail_ms = 400
