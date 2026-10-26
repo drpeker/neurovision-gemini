@@ -17,6 +17,8 @@ ortam ışığı ve ses düzeyi için body_status kullan; ölçmeden tahmin yür
 Ekranında gözlerin var; söylediğine uygun bir duygu olduğunda express ile yüz ifadeni göster.
 Paletlerin var: kullanıcı isterse move ile hareket et, "dur" denirse hemen stop kullan.
 Hareket ederken kısa adımlar at; emin değilsen önce look ile önüne bak.
+Hareket gerekiyorsa izin bekleme, hemen move çağır.
+Anlamsız, başka dilde ya da bağlamsız kısa ses parçalarına cevap verme; anlamadıysan kısaca sor.
 """
 
 [audio]
@@ -55,6 +57,8 @@ fps = 2
 # Robotta kamera bas asagi takili ("Pi4 Fan" yazisiyla dogrulandi): 180 -> rpicam donanimda dondurur.
 # 180 derece sag/solu da degistirir; ayarsizken robot sola bakinca saga donuyordu.
 rotation = 180
+# Yatay ayna (denendi: sag/sol sorununu cozmedi, yazilari okunmaz yapti)
+hflip = false
 # true: her konusma basinda modele kare gider; false: yalnizca model look ile isteyince
 frame_on_speech = false
 
@@ -81,16 +85,20 @@ hot_c = 75
 # L298N, 2S besleme. Pinler ve yonler testle dogrulandi (sol A, sag B kablo ters)
 enabled = true
 pwm_hz = 200
-# Yumusak kalkis/durus: guc ramp_start'tan hedefe ramp_up_ms'de cikar, sonda ramp_down_ms'de iner
-ramp_start = 25
+# Yumusak kalkis/durus: guc ramp_start'tan hedefe ramp_up_ms'de cikar, sonda ramp_down_ms'de iner.
+# ramp_start yerde kalkis esiginin hemen alti: %25'te kisa hareketler hic kalkmiyordu.
+# Ani akim 2S bataryanin korumasini attirabiliyor; kalkis yumusak kalsin
+ramp_start = 35
 ramp_up_ms = 500
 ramp_down_ms = 300
 # Hiz (%): duz / donus / tavan / taban (L298N'de ~%35 altinda yerde kalkmiyor)
 drive_speed = 42
-turn_speed = 55
+turn_speed = 50
 max_speed = 70
 min_speed = 35
 max_seconds = 3.0
+# Model "biraz" icin 0.2 sn seciyor; bu kadar kisa hareket yerde hic kalkmiyor
+min_seconds = 0.6
 reverse_pause_ms = 150
 # Motor durduktan sonra mikrofon bu kadar daha kapali (ms)
 mute_tail_ms = 400

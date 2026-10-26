@@ -49,7 +49,7 @@ def make_camera(cfg: dict) -> Camera | None:
     c = cfg["camera"]
     if not c["enabled"]:
         return None
-    return Camera(c["width"], c["height"], c["fps"], c["rotation"])
+    return Camera(c["width"], c["height"], c["fps"], c["rotation"], c.get("hflip", False))
 
 
 async def check(cfg: dict) -> None:

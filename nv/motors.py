@@ -100,7 +100,8 @@ class Motors:
         if direction not in MOVES:
             return {"error": f"bilinmeyen yön: {direction}"}
         c = self._cfg
-        seconds = max(0.2, min(float(seconds), c["max_seconds"]))
+        # Cok kisa hareket rampada kaybolur, palet yerde kalkmaz: en az min_seconds
+        seconds = max(c["min_seconds"], min(float(seconds), c["max_seconds"]))
         base = c["turn_speed"] if direction in ("sol", "sag") else c["drive_speed"]
         duty = min(c["max_speed"], base * SPEEDS.get(speed, 1.0)) * self._derate()
         duty = max(duty, c["min_speed"])
@@ -119,9 +120,10 @@ class Motors:
                 await asyncio.sleep(pause)
             self._prev_dir = dirs
             up, down = c["ramp_up_ms"] / 1000, c["ramp_down_ms"] / 1000
-            # Kisa hareketlerde rampalar sureyi asmasin
-            if up + down > seconds:
-                up, down = seconds * 0.6, seconds * 0.4
+            # Rampalar surenin en fazla %60'i; kalan surede guc hedefte kalsin
+            if up + down > seconds * 0.6:
+                k = seconds * 0.6 / (up + down)
+                up, down = up * k, down * k
             await self._ramp(dirs, c["ramp_start"], duty, up)
             await asyncio.sleep(seconds - up - down)
             await self._ramp(dirs, duty, c["ramp_start"], down)

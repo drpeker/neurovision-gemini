@@ -20,7 +20,7 @@ META_KEYS = {"Lux": "lux", "ExposureTime": "exposure_us", "AnalogueGain": "gain"
 
 
 class Camera:
-    def __init__(self, width: int, height: int, fps: int, rotation: int = 0):
+    def __init__(self, width: int, height: int, fps: int, rotation: int = 0, hflip: bool = False):
         runtime = Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp"))
         self._fifo = runtime / f"nv-camera-meta-{os.getpid()}"
         # rpicam yalnizca 0/180 dondurur; 90/270 (yan takili kamera) kare istendiginde PIL ile
@@ -32,6 +32,8 @@ class Camera:
             "--framerate", str(fps), "--rotation", "180" if rotation == 180 else "0", "--flush",
             "--metadata", str(self._fifo), "--metadata-format", "txt", "-o", "-",
         ]
+        if hflip:
+            self._args.insert(-2, "--hflip")
         self._proc = None
         self._task = None
         self._meta_task = None
