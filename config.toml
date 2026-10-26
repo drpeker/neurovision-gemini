@@ -28,7 +28,9 @@ speaker = "speaker"
 # "Mic Boost" kontrolunun bulundugu ALSA karti (googlevoicehat-soundcard)
 card = "sndrpigooglevoi"
 # INMP441 yazilim kazanci (-10..30 dB, ~/.asoundrc "Mic Boost"); konusma tepesi 1.0'a dayanirsa dusur
-mic_boost_db = 6
+# GPIO20'ye tasindiktan sonra olculdu: +6 dB'de konusma -30 dBFS, en yuksek tepe -9 dBFS.
+# +12 dB konusmayi ~-24'e, tepeyi ~-3'e cikarir; kirpma yok
+mic_boost_db = 12
 # INMP441'in DC/dusuk frekans kaymasini temizler; filtre, VAD ve modele giden ses icin
 highpass_hz = 80
 # Robot konusurken mikrofon kapali (AEC yok); konusma bitince bu kadar bekle
