@@ -115,6 +115,7 @@ async def run(cfg: dict) -> None:
     speaker.start()
     mic.start()
     brain = LiveBrain(cfg, key, mic, speaker, camera, memory)
+    face = await make_face(cfg, speaker, brain)
 
     task = asyncio.create_task(brain.run(), name="brain")
     loop = asyncio.get_running_loop()
@@ -130,8 +131,26 @@ async def run(cfg: dict) -> None:
         speaker.stop()
         if camera:
             await camera.stop()
+        if face:
+            await face.stop()
         memory.close()
         log.info("kapatildi")
+
+
+async def make_face(cfg: dict, speaker: Speaker, brain):
+    """Ekran yoksa ya da acilmazsa robot ekransiz calismaya devam eder."""
+    if not cfg["display"]["enabled"]:
+        return None
+    from nv.display import Face, Panel
+    try:
+        panel = Panel(cfg["display"])
+    except Exception as e:
+        log.warning("ekran acilamadi, ekransiz devam: %s", e)
+        return None
+    face = Face(cfg["display"], panel, speaker, brain.gate, brain.body)
+    await face.start()
+    brain.attach_face(face)
+    return face
 
 
 def main() -> None:

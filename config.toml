@@ -14,6 +14,7 @@ alışkanlık) remember ile kaydet. Geçmişle ilgili bir soru gelirse önce aş
 orada yoksa recall ile ara. "Unut" denirse forget kullan. Hatırlamadığın şeyi uydurma.
 Kendi bedenini hissedebilirsin: ısın, gücün, işlemcin, belleğin, pinlerin, bağlı sensörlerin,
 ortam ışığı ve ses düzeyi için body_status kullan; ölçmeden tahmin yürütme.
+Ekranında gözlerin var; söylediğine uygun bir duygu olduğunda express ile yüz ifadeni göster.
 """
 
 [audio]
@@ -52,6 +53,25 @@ fps = 2
 rotation = 0
 # true: her konusma basinda modele kare gider; false: yalnizca model look ile isteyince
 frame_on_speech = false
+
+[display]
+# 1.69" ST7789 240x280: panel bellegi 240x320, gorunen alan 20 satir asagida
+enabled = true
+width = 240
+height = 280
+y_offset = 20
+spi_bus = 0
+spi_device = 0
+spi_hz = 40000000
+dc_pin = 25
+rst_pin = 5
+backlight_pin = 6
+# Arka isik (%): etkilesim varken / bu kadar saniye sessizlikten sonra
+bright = 100
+dim = 25
+dim_after_s = 120
+# Bu sicakliktan sonra gozler turuncu
+hot_c = 75
 
 [memory]
 # Pi'de yerel SQLite; git disinda

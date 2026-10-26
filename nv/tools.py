@@ -10,6 +10,7 @@ from google.genai import types
 
 from .body import SECTIONS, Body
 from .camera import Camera
+from .display import EMOTIONS
 from .memory import CATEGORIES, Memory
 
 log = logging.getLogger(__name__)
@@ -60,6 +61,14 @@ DECLARATIONS = [
         }, []),
     ),
     types.FunctionDeclaration(
+        name="express",
+        description="Yüzündeki ifadeyi ekranda birkaç saniye göster. Söylediğin şeye uygun bir "
+                    "duygu olduğunda kullan (sevinç, şaşkınlık, üzüntü...). Her cümlede kullanma.",
+        parameters_json_schema=_params({
+            "emotion": {"type": "string", "enum": EMOTIONS},
+        }, ["emotion"]),
+    ),
+    types.FunctionDeclaration(
         name="forget",
         description="Kullanıcı bir bilgiyi unutmanı istediğinde o bilgiyi hafızadan sil.",
         parameters_json_schema=_params({
@@ -74,6 +83,7 @@ class Tools:
         self._camera = camera
         self._memory = memory
         self._body = body
+        self.face = None  # LiveBrain.attach_face
 
     async def handle(self, call: types.FunctionCall) -> types.FunctionResponse:
         args = call.args or {}
@@ -90,7 +100,15 @@ class Tools:
             result = {"error": f"Araç çalışmadı: {e}"}
         return types.FunctionResponse(id=call.id, name=call.name, response=result)
 
+    def _express(self, emotion: str) -> dict:
+        if not self.face:
+            return {"result": "Ekran yok."}
+        self.face.set_emotion(emotion)
+        return {"result": f"Yüzünde '{emotion}' ifadesi gösteriliyor."}
+
     def _look(self, call: types.FunctionCall) -> types.FunctionResponse:
+        if self.face:
+            self.face.flash()
         jpeg = self._camera.frame() if self._camera else None
         if not jpeg:
             return types.FunctionResponse(id=call.id, name=call.name,

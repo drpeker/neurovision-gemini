@@ -32,10 +32,11 @@ class LiveBrain:
         self._camera = camera
         self._memory = memory
         v = cfg["vad"]
-        self._gate = SpeechGate(v["aggressiveness"], v["preroll_ms"], v["hangover_ms"],
-                                v["min_speech_ms"], v["margin_db"])
-        self._body = Body(cfg, camera, self._gate, memory)
-        self._tools = Tools(camera, memory, self._body)
+        self.gate = SpeechGate(v["aggressiveness"], v["preroll_ms"], v["hangover_ms"],
+                               v["min_speech_ms"], v["margin_db"])
+        self.body = Body(cfg, camera, self.gate, memory)
+        self._tools = Tools(camera, memory, self.body)
+        self.face = None  # attach_face ile (nv.display.Face)
         self._frame_on_speech = cfg["camera"]["enabled"] and cfg["camera"]["frame_on_speech"]
         d = cfg["debug"]
         self._rec = DebugRecorder(Path(d["dir"]), d["keep"]) if d["enabled"] else None
@@ -45,6 +46,10 @@ class LiveBrain:
         self._last_activity = time.monotonic()
         self._heard: list[str] = []
         self._said: list[str] = []
+
+    def attach_face(self, face) -> None:
+        self.face = face
+        self._tools.face = face
 
     def _instruction(self) -> str:
         m = self._cfg["memory"]
@@ -87,7 +92,7 @@ class LiveBrain:
         for _ in range(500 // FRAME_MS):
             await self._mic.frames.get()
         frames = [await self._mic.frames.get() for _ in range(n)]
-        floor_db = self._gate.calibrate(frames)
+        floor_db = self.gate.calibrate(frames)
         log.info("ortam gurultusu %.1f dBFS; konusma esigi %.1f dBFS",
                  floor_db, floor_db + self._cfg["vad"]["margin_db"])
 
@@ -128,7 +133,7 @@ class LiveBrain:
                      "devam" if self._handle else "yeni oturum")
             if self._rec and not self._handle:
                 self._rec.session(model, config.system_instruction)
-            self._body.connected_since = time.monotonic()
+            self.body.connected_since = time.monotonic()
             if self._handle:
                 # Baglanti konusmanin ortasinda koptuysa sunucu o konusmanin bitmesini
                 # bekleyip takili kaliyor; akisin bittigini hemen bildir
@@ -142,25 +147,25 @@ class LiveBrain:
                     if t.exception():
                         raise t.exception()
             finally:
-                self._body.connected_since = None
+                self.body.connected_since = None
                 for t in tasks:
                     t.cancel()
         log.info("baglanti yenileniyor")
 
     async def _send(self, s) -> None:
-        self._gate.reset()
+        self.gate.reset()
         while True:
             frame = await self._mic.frames.get()
             if self._speaker.busy:
                 # Yari cift yonlu: robot konusurken kendi sesini dinleme
-                if self._gate.active:
+                if self.gate.active:
                     await s.send_realtime_input(audio_stream_end=True)
                     if self._rec:
                         self._rec.end()
-                self._gate.reset()
+                self.gate.reset()
                 continue
 
-            frames, event = self._gate.feed(frame)
+            frames, event = self.gate.feed(frame)
             if event == "start":
                 log.info("konusma onaylandi, modele gonderiliyor")
                 if self._rec:
@@ -176,6 +181,8 @@ class LiveBrain:
                 await s.send_realtime_input(audio_stream_end=True)
                 if self._rec:
                     self._rec.end()
+                if self.face:
+                    self.face.thinking = True  # cevap sesi gelene kadar "dusunuyor"
 
     async def _recv(self, s, renew: asyncio.Event) -> None:
         while True:
@@ -207,11 +214,15 @@ class LiveBrain:
             for part in sc.model_turn.parts or []:
                 if part.inline_data and part.inline_data.data:
                     self._speaker.play(part.inline_data.data)
+                    if self.face:
+                        self.face.thinking = False
         if sc.input_transcription and sc.input_transcription.text:
             self._heard.append(sc.input_transcription.text)
         if sc.output_transcription and sc.output_transcription.text:
             self._said.append(sc.output_transcription.text)
         if sc.turn_complete:
+            if self.face:
+                self.face.thinking = False
             heard, said = "".join(self._heard).strip(), "".join(self._said).strip()
             if heard:
                 log.info("kullanici: %s", heard)
