@@ -64,10 +64,11 @@ hangover_ms = 800
 
 [camera]
 enabled = true
-width = 320
-height = 240
-# OV5647 1 kare/s'de cikti vermiyor; 2 en dusuk calisan deger
-fps = 2
+# 640x480: 320x240'te JPEG kaybi yuzunden YOLO kenardaki kisiyi %29 guvenle goruyordu, burada %63
+width = 640
+height = 480
+# OV5647 1 kare/s'de cikti vermiyor. Nesne takibi icin 5 (her donusten sonra yeni kare)
+fps = 5
 # Kamera montaj acisi, saat yonunde: 0 / 90 / 180 / 270 (90 ve 270 yazilimda dondurulur)
 # Robotta kamera bas asagi takili ("Pi4 Fan" yazisiyla dogrulandi): 180 -> rpicam donanimda dondurur.
 # 180 derece sag/solu da degistirir; ayarsizken robot sola bakinca saga donuyordu.
@@ -89,7 +90,8 @@ spi_hz = 40000000
 dc_pin = 25
 rst_pin = 5
 backlight_pin = 6
-# Arka isik (%): etkilesim varken / bu kadar saniye sessizlikten sonra
+# Arka isik (%): etkilesim varken / bu kadar saniye sessizlikten sonra.
+# Su an yalnizca acik/kapali (>0 acik): yazilim PWM'i motor PWM'ini bozuyordu
 bright = 100
 dim = 25
 dim_after_s = 120
@@ -119,6 +121,9 @@ pwm_hz = 200
 ramp_start = 22
 ramp_up_ms = 500
 ramp_down_ms = 300
+# Takip darbeleri (kisa, rampasiz yerine kisa rampa): 40 ms'de art arda %40 darbeler
+# bataryayi tuketip korumayi attirabildi; 90 ms ani akimi yumusatir, donusu az etkiler
+pulse_ramp_ms = 90
 # Hiz (%), duzey %100'de: duz / donus / tavan / taban. L298N'deki begenilen hizlarin
 # (42/50) MX1508 karsiligi: L298N ~2 V yiyordu, ayni motor gerilimi icin daha az PWM gerekir.
 # Tavan: 2S (8.4 V) x %70 ~ 6 V motor siniri. Taban: yerde kalkis esigi (tahmin, testle ayarla)
@@ -138,6 +143,36 @@ derate = 0.6
 # en: yalnizca L298N'de kullanilir; MX1508'de GPIO12/13 bos
 left = { in1 = 23, in2 = 24, en = 12, invert = false }
 right = { in1 = 27, in2 = 22, en = 13, invert = true }
+
+[vision]
+# Yerel nesne tanima (YOLO11n 320, COCO 80 nesne) ile yalnizca donerek takip
+enabled = true
+model = "models/yolo11n_320.onnx"
+threads = 2
+# Model esigi dusuk (fare gibi kucuk nesneler); takip edilecek hedef icin ayri esik
+threshold = 0.25
+target_threshold = 0.3
+# Hedef kadraj ortasina bu kadar yakinsa (genisligin orani) donulmez
+center_tolerance = 0.08
+# Kameranin yatay gorus acisi (OV5647 ~54 derece): sapma -> donulecek aci
+hfov_deg = 54
+# Yerde olculdu (MX1508, 2S, 2026-10-27): [guc %, 0.25 sn rampasiz darbede donus derecesi]
+# %24'te 3, %40'ta 14 derece; takipte hiz duzeyi ve "yavas" uygulanmaz
+turn_table = [[24, 3], [28, 5.5], [32, 8], [36, 11], [40, 14]]
+# Buyuk sapmada %40 ile darbe uzar, en fazla bu kadar
+pulse_max = 0.6
+# Her donusten sonra bu kadar durup dinle ("dur" duyulsun)
+listen_s = 0.8
+# Hedef bu kadar gorunmezse aranir: son goruldugu yone search_steps kez donulur
+lost_s = 2.0
+search_steps = 8
+search_pulse = 0.5
+search_duty = 36
+# Takilma: art arda bu kadar darbede donus beklenenin bu oranindan azsa takip durur
+stall_pulses = 3
+stall_ratio = 0.25
+timeout_s = 60
+max_timeout_s = 300
 
 [radio]
 # Kapali: radyo calarken konusma muzikten guvenilir ayrilamadi (robot takili kaldi)

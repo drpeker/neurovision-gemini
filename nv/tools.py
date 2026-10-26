@@ -15,6 +15,7 @@ from .display import EMOTIONS
 from . import web
 from .lang import looks_foreign
 from .memory import CATEGORIES, Memory
+from .vision import COCO80, COLORED, COLORS
 
 log = logging.getLogger(__name__)
 
@@ -60,6 +61,7 @@ DECLARATIONS = [
             "section": {"type": "string", "enum": SECTIONS,
                         "description": "ozet: genel durum (varsayılan). Belirli bir soru için ilgili "
                                        "bölümü seç: gpio, i2c, guc, isi, cpu, ram, disk, ag, isik, ses, motor, "
+                                       "gorus (nesne takibi ve son görülenler), "
                                        "sistemler, kota (token kullanımı); hepsi: tümü"},
         }, []),
     ),
@@ -119,7 +121,7 @@ DECLARATIONS = [
 
 VOLUME_STEP = 15
 # Yanlis duyulan (yabanci dil/gurultu) bir sozle yapilmamasi gereken isler
-GUARDED = {"move", "remember", "forget", "volume", "shutdown", "motor_speed"}
+GUARDED = {"move", "remember", "forget", "volume", "shutdown", "motor_speed", "track", "turn_to"}
 
 
 class Tools:
@@ -133,6 +135,7 @@ class Tools:
         self.radio = None  # LiveBrain.attach_radio
         self.heard = lambda: ""  # LiveBrain: kullanicinin su anki sozunun yazisi
         self.on_shutdown = None  # robot.py: on_shutdown("robot" | "sistem")
+        self.tracker = None  # robot.py: nv.tracker.Tracker
 
     def declarations(self) -> list[types.FunctionDeclaration]:
         """Sabit araclar + istasyon listesine gore radyo ve ses duzeyi."""
@@ -157,6 +160,34 @@ class Tools:
                     "action": {"type": "string", "enum": ["sor", "artır", "azalt", "ayarla"]},
                     "level": {"type": "integer", "description": "ayarla için 20-100 arası yüzde"},
                 }, ["action"]),
+            ))
+        if self.tracker:
+            decls.append(types.FunctionDeclaration(
+                name="track",
+                description="Bir nesneyi ya da kişiyi gözünle takip et: yerinde dönerek onu kadrajın "
+                            "ortasında tutarsın (ileri gitmezsin). 'Beni takip et', 'bana dön', 'kediyi "
+                            "izle' gibi isteklerde kullan; kullanıcının kendisi için 'person'. Hedefi "
+                            "Türkçeden listedeki İngilizce ada çevir (kupa: cup, kase: bowl, şişe: bottle, "
+                            "fare: mouse, telefon: cell phone, kumanda: remote). Renk söylendiyse color ile "
+                            "ver ('turuncu kase': bowl + turuncu, 'siyah fare': mouse + siyah). Listede "
+                            "olmayan ama rengi belli bir nesne için target='colored object' ve color ver "
+                            "('kırmızı kutu': colored object + kırmızı); o renkteki en büyük bölge takip "
+                            "edilir. Rengi de belli değilse look + turn_to kullan. Takip arka planda "
+                            "sürer; 'dur' denince stop kullan.",
+                parameters_json_schema=_params({
+                    "target": {"type": "string", "enum": COCO80 + [COLORED]},
+                    "color": {"type": "string", "enum": COLORS, "description": "İsteğe bağlı renk"},
+                    "seconds": {"type": "number", "description": "Takip süresi; varsayılan 60, en fazla 300"},
+                }, ["target"]),
+            ))
+            decls.append(types.FunctionDeclaration(
+                name="turn_to",
+                description="Az önce look ile gördüğün bir nesneye dön. Nesnenin görüntüdeki yatay "
+                            "konumunu ver: 0 en sol, 500 orta, 1000 en sağ. Takip listesinde olmayan "
+                            "nesneler için tek seferlik kullan.",
+                parameters_json_schema=_params({
+                    "x": {"type": "integer", "description": "0-1000 arası yatay konum"},
+                }, ["x"]),
             ))
         if self.on_shutdown:
             decls.append(types.FunctionDeclaration(
@@ -209,9 +240,17 @@ class Tools:
                 if not self.motors:
                     result = {"error": "Motorlar bağlı değil."}
                 elif call.name == "move":
+                    if self.tracker:
+                        await self.tracker.stop()  # elle hareket takibi bitirir
                     result = await self.motors.move(**args)
                 else:
+                    if self.tracker:
+                        await self.tracker.stop()
                     result = await self.motors.stop()
+            elif call.name == "track":
+                result = await self.tracker.start(**args)
+            elif call.name == "turn_to":
+                result = await self._turn_to(**args)
             else:
                 result = getattr(self, f"_{call.name}")(**args)
         except Exception as e:
@@ -247,6 +286,14 @@ class Tools:
             await asyncio.sleep(0.1)
         log.info("kapatma: %s", target)
         self.on_shutdown(target)
+
+    async def _turn_to(self, x: int) -> dict:
+        await self.tracker.stop()
+        e = max(0, min(1000, int(x))) / 1000 - 0.5
+        if abs(e) <= self.tracker._cfg["center_tolerance"]:
+            return {"result": "Nesne zaten tam önünde."}
+        await self.tracker.turn_toward(e)
+        return {"result": f"{'Sola' if e < 0 else 'Sağa'} döndüm; emin olmak için tekrar look ile bakabilirsin."}
 
     def _motor_speed(self, action: str, level: int | None = None) -> dict:
         if not self.motors:

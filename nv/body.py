@@ -32,7 +32,7 @@ THROTTLE_BITS = {
     16: "düşük voltaj", 17: "frekans sınırlandı", 18: "kısıtlandı", 19: "yumuşak ısı sınırı",
 }
 SECTIONS = ["ozet", "guc", "isi", "cpu", "ram", "disk", "ag", "gpio", "i2c", "isik", "ses",
-            "motor", "sistemler", "kota", "hepsi"]
+            "motor", "gorus", "sistemler", "kota", "hepsi"]
 USAGE_LABELS = {"in_TEXT": "giriş_metin", "in_AUDIO": "giriş_ses", "in_IMAGE": "giriş_görüntü",
                 "in_VIDEO": "giriş_video", "out_AUDIO": "çıkış_ses", "out_TEXT": "çıkış_metin"}
 SOURCE_LABELS = {"live": "sohbet (Gemini Live)", "ozet": "hafıza özeti (Flash-Lite)"}
@@ -107,6 +107,7 @@ class Body:
         self.speaker = None  # LiveBrain doldurur
         self.radio = None  # LiveBrain.attach_radio
         self.motors = None  # LiveBrain.attach_motors
+        self.tracker = None  # robot.py
         self._pin_names = {int(k): v for k, v in self._cfg["pin_names"].items()}
         self._reserved = {int(k): v for k, v in self._cfg["reserved_pins"].items()}
 
@@ -213,6 +214,9 @@ class Body:
     def _motor(self) -> dict:
         return self.motors.status() if self.motors else {"durum": "motorlar bağlı değil"}
 
+    def _vision(self) -> dict:
+        return self.tracker.status() if self.tracker else {"durum": "nesne tanıma kapalı"}
+
     def _systems(self) -> dict:
         cam_age = time.monotonic() - self._camera.latest_at if self._camera and self._camera.latest else None
         return {"kamera": "yok" if cam_age is None else
@@ -243,7 +247,8 @@ class Body:
         parts = {
             "guc": self._power, "isi": self._temp, "cpu": self._cpu, "ram": self._ram,
             "disk": self._disk, "ag": self._net, "gpio": self._gpio, "i2c": self._i2c,
-            "isik": self._light, "ses": self._sound, "motor": self._motor, "sistemler": self._systems,
+            "isik": self._light, "ses": self._sound, "motor": self._motor, "gorus": self._vision,
+            "sistemler": self._systems,
             "kota": self._usage,
         }
         if section == "ozet":

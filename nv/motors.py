@@ -148,21 +148,27 @@ class Motors:
             except asyncio.CancelledError:
                 pass
 
-    async def move(self, direction: str, seconds: float, speed: str = "normal") -> dict:
-        """Hareketi baslatir ve hemen doner; onceki hareket once durdurulur."""
+    async def move(self, direction: str, seconds: float, speed: str = "normal",
+                   duty: float | None = None, soft: bool = True) -> dict:
+        """Hareketi baslatir ve hemen doner; onceki hareket once durdurulur.
+
+        duty: hiz duzeyini atlayip dogrudan PWM (%) ver (takip, kalibrasyonla).
+        soft=False: kisa darbe; rampa pulse_ramp_ms (gucu yemez, ani akimi da yumusatir).
+        """
         if direction not in MOVES:
             return {"error": f"bilinmeyen yön: {direction}"}
         c = self._cfg
         # Cok kisa hareket rampada kaybolur, palet yerde kalkmaz: en az min_seconds
         seconds = max(c["min_seconds"], min(float(seconds), c["max_seconds"]))
-        duty = max(self.duty(direction, speed) * self._derate(), c["min_speed"])
+        target = min(duty, c["max_speed"]) if duty else self.duty(direction, speed)
+        duty = max(target * self._derate(), c["min_speed"])
         await self._cancel()
         self._moving_until = time.monotonic() + seconds + 0.5
-        self._task = asyncio.create_task(self._run(MOVES[direction], seconds, duty), name="motor")
+        self._task = asyncio.create_task(self._run(MOVES[direction], seconds, duty, soft), name="motor")
         log.info("hareket: %s %.1f sn %%%.0f", direction, seconds, duty)
         return {"result": f"{direction} yönünde {seconds:.1f} saniye hareket ediliyor."}
 
-    async def _run(self, dirs: tuple[int, int], seconds: float, duty: float) -> None:
+    async def _run(self, dirs: tuple[int, int], seconds: float, duty: float, soft: bool = True) -> None:
         c = self._cfg
         try:
             # Yon degisiyorsa ve az once durduysa, motor/disli icin kisa bekle
@@ -170,7 +176,8 @@ class Motors:
             if self._prev_dir not in ((0, 0), dirs) and pause > 0:
                 await asyncio.sleep(pause)
             self._prev_dir = dirs
-            up, down = c["ramp_up_ms"] / 1000, c["ramp_down_ms"] / 1000
+            up, down = ((c["ramp_up_ms"] / 1000, c["ramp_down_ms"] / 1000) if soft
+                        else (c["pulse_ramp_ms"] / 1000,) * 2)
             # Rampalar surenin en fazla %60'i; kalan surede guc hedefte kalsin
             if up + down > seconds * 0.6:
                 k = seconds * 0.6 / (up + down)
@@ -188,6 +195,26 @@ class Motors:
         for i in range(1, n + 1):
             self._set(*dirs, start + (end - start) * i / n)
             await asyncio.sleep(step)
+
+    async def signal_check(self) -> dict:
+        """Takilma teshisi: kisa bir darbe ver, PWM pinlerde gercekten var mi olc.
+
+        Sinyal varsa sorun guc tarafinda (batarya, koruma, kablo); yoksa yazilim/pin tarafinda.
+        """
+        side = self._sides["sol"]
+        pins = (side["in1"], side["in2"])
+        await self.move("sag", 0.5, duty=self._cfg["min_speed"] + 4, soft=False)
+        await asyncio.sleep(0.15)
+        highs = 0
+        for _ in range(40):
+            out = (await asyncio.create_subprocess_exec(
+                "pinctrl", "get", ",".join(map(str, pins)), stdout=asyncio.subprocess.PIPE)).stdout
+            highs += (await out.read()).count(b"| hi")
+            await asyncio.sleep(0.004)
+        await self.stop()
+        ok = highs > 0
+        log.warning("motor sinyal kontrolu: PWM %s (40 olcumde %d yuksek)", "VAR" if ok else "YOK", highs)
+        return {"pwm_sinyali": "var" if ok else "yok"}
 
     async def stop(self) -> dict:
         await self._cancel()

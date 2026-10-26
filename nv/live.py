@@ -50,6 +50,7 @@ class LiveBrain:
         self._heard: list[str] = []
         self._said: list[str] = []
         self._renew: asyncio.Event | None = None  # acik oturumu yenilemek icin (_session doldurur)
+        self._live = None  # acik oturum (notify icin)
 
     def attach_face(self, face) -> None:
         self.face = face
@@ -59,6 +60,17 @@ class LiveBrain:
         self.motors = motors
         self._tools.motors = motors
         self.body.motors = motors
+
+    def attach_tracker(self, tracker) -> None:
+        self._tools.tracker = tracker
+        self.body.tracker = tracker
+        tracker.notify = self.notify
+
+    async def notify(self, text: str) -> None:
+        """Arka plandaki bir isten (takip) modele kisa olay bildirimi; model sesli soyler."""
+        if self._live:
+            log.info("bildirim: %s", text)
+            await self._live.send_realtime_input(text=f"[Sistem olayı] {text}")
 
     def attach_shutdown(self, fn) -> None:
         self._tools.on_shutdown = fn
@@ -170,6 +182,7 @@ class LiveBrain:
             if self._rec and not self._handle:
                 self._rec.session(model, config.system_instruction)
             self.body.connected_since = time.monotonic()
+            self._live = s
             if self._handle:
                 # Baglanti konusmanin ortasinda koptuysa sunucu o konusmanin bitmesini
                 # bekleyip takili kaliyor; akisin bittigini hemen bildir
@@ -184,6 +197,7 @@ class LiveBrain:
                         raise t.exception()
             finally:
                 self.body.connected_since = None
+                self._live = None
                 if self.motors:
                     # Beyinle baglanti koptu: robot kontrolsuz hareket etmesin
                     self.motors.halt()

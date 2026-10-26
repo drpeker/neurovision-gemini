@@ -61,6 +61,8 @@ tail -f logs/robot.log                  # canlı log
 | `nv/body.py` | Öz farkındalık (`body_status`): güç, ısı, CPU, RAM, disk, wifi, GPIO, I²C, ışık, ses, alt sistemler, Gemini token kullanımı (`kota`). Yalnızca okur |
 | `nv/display.py` | Robotun yüzü: ST7789 ekranda gözler, durum (dinliyor/düşünüyor/konuşuyor/bakıyor), duygular (`express`), altta altyazı, arka ışık |
 | `nv/motors.py` | Paletler (L298N): `move`/`stop`, yumuşak kalkış/duruş, 3 sn sınır, bağlantı kopunca durma, hareket sırasında mikrofon susturma |
+| `nv/vision.py` | Yerel nesne tanıma: YOLO11n 320 (COCO 80 nesne) ve renk bölgesi bulma. Model: `deploy/get-model.sh` |
+| `nv/tracker.py` | Nesne takibi: yalnızca yerinde dönerek ortalar; yerde ölçülmüş dönüş tablosu, takılma algılama |
 | `nv/web.py` | Hava durumu (Open-Meteo) ve Vikipedi araması; anahtarsız |
 | `nv/radio.py` | İnternet radyosu (ffmpeg). Şimdilik kapalı: `[radio] enabled = false` |
 | `nv/debug.py` | Teşhis: son 10 konuşmanın sesi ve oturum talimatı (`logs/debug/`) |

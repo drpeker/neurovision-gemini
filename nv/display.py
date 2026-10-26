@@ -120,8 +120,10 @@ class Panel:
         self._spi.writebytes2(memoryview(buf)[y0 * row:(y1 + 1) * row])
 
     def backlight(self, percent: int) -> None:
-        # lgpio yazilim PWM'i; tx_pwm(..., 0, 0) bu surumde "bad PWM micros" veriyor, %0/%100 de PWM
-        self._lg.tx_pwm(self._gpio, self._bl, 800, max(0, min(100, percent)))
+        # PWM degil, acik/kapali: ayni anda calisan ikinci bir lgpio yazilim PWM'i (arka isik)
+        # motor PWM'ini ~30 darbe sonra tamamen durduruyordu (lgpio "calisiyor" diyordu).
+        # Kisma icin donanim PWM'li bir pin (GPIO12/13) gerekir.
+        self._lg.gpio_write(self._gpio, self._bl, 1 if percent > 0 else 0)
 
     def close(self) -> None:
         self.blit(bytearray(self.w * self.h * 2), 0, self.h - 1)
@@ -239,6 +241,7 @@ class Face:
         self._caption_shown = None
         self._caption_drawn_at = 0.0
         self.radio = None  # robot.py baglar: altyazi yokken calan istasyon gorunur
+        self._gaze: float | None = None  # takip: hedefin yatay konumu (-0.5..0.5)
         self._preview: bytes | None = None  # look karesi: yuz yerine kisa sure gosterilir
         self._preview_until = 0.0
         self._task = None
@@ -255,6 +258,11 @@ class Face:
 
     def poke(self) -> None:
         self._last_active = time.monotonic()
+
+    def gaze(self, offset: float | None) -> None:
+        """Takipte gozler hedefin yonune baksin; None: serbest."""
+        self._gaze = offset
+        self.poke()
 
     def preview(self, jpeg: bytes) -> None:
         """Robotun baktigi kare, yuzun yerinde preview_s saniye (tek kare, canli degil)."""
@@ -333,7 +341,9 @@ class Face:
     def _update_targets(self, state: str, now: float) -> None:
         if now > self._emotion_until:
             self._emotion = "nötr"
-        if state == "idle" and now > self._look_at:
+        if self._gaze is not None:
+            self._tgt["dx"], self._tgt["dy"] = self._gaze * 50, 0.0
+        elif state == "idle" and now > self._look_at:
             self._tgt["dx"] = random.uniform(-22, 22)
             self._tgt["dy"] = random.uniform(-10, 10)
             self._look_at = now + random.uniform(2.0, 5.0)
