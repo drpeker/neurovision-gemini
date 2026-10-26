@@ -144,7 +144,7 @@ def main() -> None:
     cfg["debug"]["dir"] = str(ROOT / cfg["debug"]["dir"])
     load_env(ROOT / ".env")
     setup_logging(cfg["log"])
-    set_mic_boost(cfg["audio"]["mic_boost_db"])
+    set_mic_boost(cfg["audio"]["mic_boost_db"], cfg["audio"]["card"])
     asyncio.run(check(cfg) if args.check else run(cfg))
 
 

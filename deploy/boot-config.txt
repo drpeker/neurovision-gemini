@@ -8,7 +8,7 @@ dtparam=i2c_arm=on
 #dtparam=spi=on
 
 # Enable audio (loads snd_bcm2835)
-dtparam=audio=on
+dtparam=audio=off
 
 # Additional overlays and parameters are documented
 # /boot/firmware/overlays/README
@@ -55,5 +55,6 @@ dtoverlay=nospi10
 enable_uart=1
 # >>> neurovision-hw
 [all]
-dtoverlay=adau7002-simple,card-name=inmp441
+dtparam=spi=on
+dtoverlay=googlevoicehat-soundcard
 # <<< neurovision-hw

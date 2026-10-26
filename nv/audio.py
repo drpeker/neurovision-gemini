@@ -18,7 +18,7 @@ FRAME_MS = 20
 MIC_FRAME_BYTES = MIC_RATE * FRAME_MS // 1000 * 2
 
 
-def set_mic_boost(db: int, card: str = "inmp441") -> None:
+def set_mic_boost(db: int, card: str) -> None:
     """~/.asoundrc softvol kontrolu: -10 dB = 0, 1 dB adim; acilista sifirlandigi icin her seferinde."""
     step = max(0, min(40, db + 10))
     r = subprocess.run(["amixer", "-q", "-c", card, "sset", "Mic Boost", str(step)],

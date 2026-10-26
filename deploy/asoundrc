@@ -1,12 +1,13 @@
-# NeuroVision: INMP441 I2S mikrofon (adau7002-simple overlay, kart adi "inmp441")
-# Zincir: hw (2 kanal S32) -> dsnoop (paylasimli) -> sol kanal -> yazilim kazanci -> plug
+# NeuroVision ses: googlevoicehat-soundcard (INMP441 mikrofon + MAX98357A amfi, tek I2S karti)
+# Mikrofon ve hoparlor ayni I2S saatini paylasir: ikisi de 48 kHz S32 stereo'ya sabit.
 
+# --- mikrofon: hw (2 kanal S32) -> dsnoop (paylasimli) -> sol kanal -> yazilim kazanci -> plug
 pcm.inmp441_snoop {
     type dsnoop
     ipc_key 441441
     ipc_perm 0666
     slave {
-        pcm "hw:inmp441,0"
+        pcm "hw:sndrpigooglevoi,0"
         channels 2
         format S32_LE
         rate 48000
@@ -25,7 +26,7 @@ pcm.inmp441_left {
 pcm.inmp441_boost {
     type softvol
     slave.pcm "inmp441_left"
-    control { name "Mic Boost"; card inmp441 }
+    control { name "Mic Boost"; card sndrpigooglevoi }
     min_dB -10.0
     max_dB 30.0
     resolution 41
@@ -37,9 +38,14 @@ pcm.mic {
     hint { show on; description "NeuroVision INMP441 mic" }
 }
 
-# 3.5 mm jak: plug her ornekleme hizini/kanal sayisini jaka uygun hale getirir
+# --- hoparlor: MAX98357A, hiz/format mikrofonla ayni (48 kHz S32) olmali
 pcm.speaker {
     type plug
-    slave.pcm "hw:Headphones,0"
-    hint { show on; description "NeuroVision 3.5 mm hoparlor" }
+    slave {
+        pcm "hw:sndrpigooglevoi,0"
+        rate 48000
+        format S32_LE
+        channels 2
+    }
+    hint { show on; description "NeuroVision MAX98357A hoparlor" }
 }

@@ -168,7 +168,9 @@ class Body:
     async def _gpio(self) -> dict:
         pins = {}
         for line in (await _run("pinctrl", "get", "0-27")).splitlines():
-            m = re.match(r"\s*(\d+):\s+(\S+)\s+(\S+)\s+\|\s+(\S+)\s+//\s+\S+\s+=\s+(\S+)", line)
+            # Cikis pinlerinde surus alani da var: "5: op -- pu | hi // GPIO5 = output"
+            m = re.match(r"\s*(\d+):\s+(\S+)(?:\s+(?:--|dh|dl))?\s+(\S+)\s+\|\s+(\S+)\s+//\s+\S+\s+=\s+(\S+)",
+                         line)
             if not m:
                 continue
             n, fn, pull, level, name = int(m[1]), m[2], m[3], m[4], m[5]

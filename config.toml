@@ -17,9 +17,11 @@ ortam ışığı ve ses düzeyi için body_status kullan; ölçmeden tahmin yür
 """
 
 [audio]
-# ALSA cihaz adlari (~/.asoundrc): mic = INMP441, speaker = 3.5 mm jak
+# ALSA cihaz adlari (~/.asoundrc): mic = INMP441, speaker = MAX98357A (ikisi de I2S karti)
 mic = "mic"
 speaker = "speaker"
+# "Mic Boost" kontrolunun bulundugu ALSA karti (googlevoicehat-soundcard)
+card = "sndrpigooglevoi"
 # INMP441 yazilim kazanci (-10..30 dB, ~/.asoundrc "Mic Boost"); konusma tepesi 1.0'a dayanirsa dusur
 mic_boost_db = 6
 # INMP441'in DC/dusuk frekans kaymasini temizler; filtre, VAD ve modele giden ses icin
@@ -77,8 +79,12 @@ i2c_buses = [1]
 15 = "UART RX"
 18 = "I2S BCLK"
 19 = "I2S LRCLK"
-20 = "I2S mikrofon"
-21 = "I2S hoparlör (planlı)"
+20 = "I2S mikrofon (INMP441 SD)"
+21 = "I2S hoparlör (MAX98357A DIN)"
+16 = "amfi SD (ses sürücüsü; amfide boş)"
+9 = "SPI MISO"
+10 = "SPI MOSI (ekran SDA)"
+11 = "SPI SCLK (ekran SCL)"
 
 # Pin planimizdaki gorevler (henuz takili olmayanlar "planlı")
 [body.pin_names]
@@ -88,15 +94,11 @@ i2c_buses = [1]
 23 = "motor IN1 (planlı)"
 24 = "motor IN2 (planlı)"
 27 = "motor IN3 (planlı)"
-16 = "amfi SD (planlı)"
-8 = "ekran CS (planlı)"
+25 = "ekran DC"
+5 = "ekran RST"
+8 = "ekran CS (SPI CE0)"
+6 = "ekran arka ışık"
 7 = "dokunmatik CS (planlı)"
-9 = "SPI MISO (planlı)"
-10 = "SPI MOSI (planlı)"
-11 = "SPI SCLK (planlı)"
-25 = "ekran DC (planlı)"
-5 = "ekran RST (planlı)"
-6 = "ekran arka ışık (planlı)"
 17 = "dokunmatik IRQ (planlı)"
 
 [debug]
