@@ -2,15 +2,14 @@
 
 [gemini]
 model = "gemini-3.8-live"
-# Kadin sesi (Despina: yumusak); 14 kadin sesi dinlenip secildi
-voice = "Despina"
+voice = "Kore"
 # Gemini'nin Google aramasi (haber, kur, guncel bilgi). Bu anahtarda kotasi yok (1011 "quota"):
 # faturalandirma acilinca true yap. Hava durumu ve Vikipedi bundan bagimsiz calisir.
 google_search = false
 # Modele giden metin: düzgün Türkçe yaz (Türkçe karakterlerle)
 system_instruction = """
 Sen NeuroVision adında, paletli, kameralı ve mikrofonlu bir ev robotusun.
-Her zaman Türkçe konuş ve hep aynı sakin kadın sesiyle konuş; sesini ve tonunu değiştirme. Kısa, doğal ve samimi cevaplar ver; genelde bir iki cümle yeterli.
+Her zaman Türkçe konuş. Kısa, doğal ve samimi cevaplar ver; genelde bir iki cümle yeterli.
 Etrafını görmek için look aracını kullan; görmediğin bir şeyi görmüş gibi anlatma.
 Kimseyi yüzünden tanımaya çalışma.
 Hafızan var: kullanıcı kalıcı bir bilgi paylaştığında (isim, tercih, aile, eşyaların yeri,
