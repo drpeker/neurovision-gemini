@@ -97,6 +97,8 @@ dim = 25
 dim_after_s = 120
 # Bu sicakliktan sonra gozler turuncu
 hot_c = 75
+# Cevap bu kadar saniyede gelmezse "dusunuyor" noktalari kalkar
+thinking_timeout_s = 4
 # Acilista "Peker / AI Technology" ekrani bu kadar saniye kalir
 splash_s = 3
 # look ile alinan kare yuzun yerinde bu kadar saniye gorunur (tek kare, canli degil)

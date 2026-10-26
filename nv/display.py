@@ -231,7 +231,7 @@ class Face:
         self._look_at = time.monotonic() + 2
         self._flash_until = 0.0
         self._emotion, self._emotion_until = "nötr", 0.0
-        self.thinking = False
+        self._thinking_since: float | None = None
         self._last_active = time.monotonic()
         self._bright = None
         self._temp, self._temp_at = 0.0, 0.0
@@ -258,6 +258,21 @@ class Face:
 
     def poke(self) -> None:
         self._last_active = time.monotonic()
+
+    @property
+    def thinking(self) -> bool:
+        """Cevap bekleniyor. Gelmezse (gurultu modele gitti, model sustu) thinking_timeout_s
+        sonra kendiliginden biter; yoksa yuz bir sonraki konusmaya kadar dusunur gorunuyordu."""
+        if self._thinking_since is None:
+            return False
+        if time.monotonic() - self._thinking_since > self._cfg["thinking_timeout_s"]:
+            self._thinking_since = None
+            return False
+        return True
+
+    @thinking.setter
+    def thinking(self, value: bool) -> None:
+        self._thinking_since = time.monotonic() if value else None
 
     def gaze(self, offset: float | None) -> None:
         """Takipte gozler hedefin yonune baksin; None: serbest."""

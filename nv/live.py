@@ -259,6 +259,8 @@ class LiveBrain:
             renew.set()
 
         if msg.tool_call:
+            if self.face:
+                self.face.thinking = True  # arac calisirken bekleme suresi yeniden baslasin
             replies = [await self._tools.handle(fc) for fc in msg.tool_call.function_calls or []]
             await s.send_tool_response(function_responses=replies)
 
