@@ -49,6 +49,7 @@ class LiveBrain:
         self._last_activity = time.monotonic()
         self._heard: list[str] = []
         self._said: list[str] = []
+        self._renew: asyncio.Event | None = None  # acik oturumu yenilemek icin (_session doldurur)
 
     def attach_face(self, face) -> None:
         self.face = face
@@ -81,9 +82,12 @@ class LiveBrain:
             realtime_input_config=types.RealtimeInputConfig(
                 automatic_activity_detection=types.AutomaticActivityDetection(
                     prefix_padding_ms=300, silence_duration_ms=700)),
-            # Sikistirma: oturum suresi sinirsiz; resumption: baglanti yenilenince baglam korunur
+            # Sikistirma: baglam trigger_tokens'i gecince en eskisi atilip target_tokens'e iner;
+            # her tur tum baglami yeniden isledigi icin tur basina token bununla sinirli kalir
             context_window_compression=types.ContextWindowCompressionConfig(
-                sliding_window=types.SlidingWindow()),
+                trigger_tokens=g["context_trigger_tokens"],
+                sliding_window=types.SlidingWindow(target_tokens=g["context_target_tokens"])),
+            # resumption: baglanti kopunca (GoAway, ag) ayni oturuma donulur
             session_resumption=types.SessionResumptionConfig(handle=self._handle),
             input_audio_transcription=types.AudioTranscriptionConfig(),
             output_audio_transcription=types.AudioTranscriptionConfig(),
@@ -118,16 +122,26 @@ class LiveBrain:
                  floor_db, floor_db + self._cfg["vad"]["margin_db"])
 
     async def _consolidate_when_idle(self) -> None:
-        """Orta/uzun hafiza: sohbet sustugunda dokumu ozetle, kalici bilgileri cikar."""
+        """Orta/uzun hafiza: sohbet sustugunda dokumu ozetle, kalici bilgileri cikar.
+
+        Ozetten sonra oturum yenilenir: yeni oturum yalnizca talimat + ozetler + bilgilerle
+        baslar, eski sohbet her turda yeniden islenip token harcamaz.
+        """
         m = self._cfg["memory"]
         while True:
             await asyncio.sleep(30)
             if time.monotonic() - self._last_activity < m["idle_s"]:
                 continue
             try:
-                await consolidate(self._memory, self._client, m["summary_model"])
+                summarized = await consolidate(self._memory, self._client, m["summary_model"])
             except Exception as e:
                 log.warning("hafiza ozetleme hatasi: %s", e)
+                continue
+            busy = self.gate.active or self._speaker.busy or (self.motors and self.motors.busy)
+            if summarized and self._renew and not busy:
+                log.info("sessizlik: yeni oturum aciliyor (sohbet ozetlendi)")
+                self._handle = None
+                self._renew.set()
 
     async def _connect_forever(self) -> None:
         delay = 1
@@ -159,7 +173,7 @@ class LiveBrain:
                 # Baglanti konusmanin ortasinda koptuysa sunucu o konusmanin bitmesini
                 # bekleyip takili kaliyor; akisin bittigini hemen bildir
                 await s.send_realtime_input(audio_stream_end=True)
-            renew = asyncio.Event()
+            renew = self._renew = asyncio.Event()
             tasks = [asyncio.create_task(self._send(s)), asyncio.create_task(self._recv(s, renew)),
                      asyncio.create_task(renew.wait())]
             try:

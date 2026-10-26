@@ -34,6 +34,27 @@ FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
 FONT_BOLD = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 
 
+def to_rgb565(img) -> bytes:
+    """PIL RGB goruntuyu panelin RGB565 (buyuk uclu) baytlarina cevir; dongu PIL icinde (C)."""
+    from PIL import Image, ImageChops
+    r, g, b = img.split()
+    hi = ImageChops.add(r.point(lambda v: v & 0xF8), g.point(lambda v: v >> 5))
+    lo = ImageChops.add(g.point(lambda v: (v << 3) & 0xE0), b.point(lambda v: v >> 3))
+    return Image.merge("LA", (hi, lo)).tobytes()
+
+
+def camera_preview(jpeg: bytes, w: int, h: int) -> bytes:
+    """Kamera karesini w x h alana oranini koruyarak sigdir, ortala (RGB565)."""
+    import io
+
+    from PIL import Image
+    img = Image.open(io.BytesIO(jpeg)).convert("RGB")
+    img.thumbnail((w, h))
+    out = Image.new("RGB", (w, h))
+    out.paste(img, ((w - img.width) // 2, (h - img.height) // 2))
+    return to_rgb565(out)
+
+
 def splash(w: int, h: int) -> bytes:
     """Acilis ekrani: renkli "Peker", altinda "AI Technology" (RGB565)."""
     import colorsys
@@ -53,7 +74,7 @@ def splash(w: int, h: int) -> bytes:
         x += draw.textlength(ch, font=big)
     draw.line((w * 0.2, h * 0.54, w * 0.8, h * 0.54), fill=(40, 210, 255), width=2)
     draw.text((w / 2, h * 0.63), "AI Technology", font=small, fill=(225, 240, 255), anchor="ms")
-    return b"".join(rgb(*px) for px in img.getdata())
+    return to_rgb565(img)
 
 
 class Panel:
@@ -218,6 +239,8 @@ class Face:
         self._caption_shown = None
         self._caption_drawn_at = 0.0
         self.radio = None  # robot.py baglar: altyazi yokken calan istasyon gorunur
+        self._preview: bytes | None = None  # look karesi: yuz yerine kisa sure gosterilir
+        self._preview_until = 0.0
         self._task = None
 
     # --- LiveBrain'den ---
@@ -232,6 +255,11 @@ class Face:
 
     def poke(self) -> None:
         self._last_active = time.monotonic()
+
+    def preview(self, jpeg: bytes) -> None:
+        """Robotun baktigi kare, yuzun yerinde preview_s saniye (tek kare, canli degil)."""
+        self._preview = jpeg
+        self.poke()
 
     def caption(self, text: str, who: str) -> None:
         """who: "user" ya da "robot". Metin akarken her parcada tamami verilir."""
@@ -289,6 +317,10 @@ class Face:
             await self._backlight(now)
             await self._status(now)
             await self._draw_caption(now)
+            if await self._draw_preview(now):
+                last_frame = None  # kare bitince yuz bastan cizilsin
+                await asyncio.sleep(0.2)
+                continue
             self._update_targets(state, now)
             moving = self._tween()
             animated = state in ("speaking", "thinking", "listening", "looking") or self._blink_t >= 0
@@ -405,6 +437,20 @@ class Face:
         c.circle(36, 18, 6, rgb(*COLORS["ok" if online else "bad"]))
         c.circle(self._panel.w - 36, 18, 6, rgb(*COLORS[level]))
         await self._run_panel(self._panel.blit, c.buf, 8, 28)
+
+    async def _draw_preview(self, now: float) -> bool:
+        """Yeni kare geldiyse ciz; gosterim suresi boyunca True (yuz cizilmez)."""
+        if self._preview:
+            jpeg, self._preview = self._preview, None
+            y0, y1 = self._face_y
+            h = y1 - y0 + 1
+            data = await asyncio.get_running_loop().run_in_executor(
+                self._pool, camera_preview, jpeg, self._panel.w, h)
+            row = self._panel.w * 2
+            self._canvas.buf[y0 * row:y0 * row + len(data)] = data
+            await self._run_panel(self._panel.blit, self._canvas.buf, y0, y1)
+            self._preview_until = now + self._cfg["preview_s"]
+        return now < self._preview_until
 
     async def _draw_caption(self, now: float) -> None:
         if not self._captions:

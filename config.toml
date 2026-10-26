@@ -6,6 +6,9 @@ voice = "Kore"
 # Gemini'nin Google aramasi (haber, kur, guncel bilgi). Bu anahtarda kotasi yok (1011 "quota"):
 # faturalandirma acilinca true yap. Hava durumu ve Vikipedi bundan bagimsiz calisir.
 google_search = false
+# Oturum baglami bu kadar tokeni gecince en eskisi atilip hedefe iner (her tur tum baglami isler)
+context_trigger_tokens = 16000
+context_target_tokens = 8000
 # Modele giden metin: düzgün Türkçe yaz (Türkçe karakterlerle)
 system_instruction = """
 Sen NeuroVision adında, paletli, kameralı ve mikrofonlu bir ev robotusun.
@@ -94,6 +97,8 @@ dim_after_s = 120
 hot_c = 75
 # Acilista "Peker / AI Technology" ekrani bu kadar saniye kalir
 splash_s = 3
+# look ile alinan kare yuzun yerinde bu kadar saniye gorunur (tek kare, canli degil)
+preview_s = 3
 # Altta altyazi: son soylenen (gri) ve robotun cevabi (beyaz); sessizlikten hold_s sonra silinir
 captions = true
 caption_lines = 3
@@ -145,7 +150,8 @@ echo_margin_db = 10
 [memory]
 # Pi'de yerel SQLite; git disinda
 db = "data/memory.db"
-# Sohbet bu kadar sustuktan sonra dokum ozetlenir ve kalici bilgiler cikarilir
+# Sohbet bu kadar sustuktan sonra dokum ozetlenir, kalici bilgiler cikarilir ve oturum
+# yenilenir (yeni oturum ozet + bilgilerle baslar)
 idle_s = 120
 summary_model = "gemini-3.5-flash-lite"
 # Yeni oturum acilirken modele verilen bilgi ve ozet sayisi

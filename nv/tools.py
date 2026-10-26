@@ -255,6 +255,8 @@ class Tools:
         if self.face:
             self.face.flash()
         jpeg = self._camera.frame() if self._camera else None
+        if jpeg and self.face:
+            self.face.preview(jpeg)
         if not jpeg:
             return types.FunctionResponse(id=call.id, name=call.name,
                                           response={"error": "Kamera görüntüsü alınamadı."})
