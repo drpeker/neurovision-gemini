@@ -3,6 +3,7 @@
 Aciklamalar ve donen sonuclar modele gider: duzgun Turkce yazilir.
 """
 
+import asyncio
 import logging
 import time
 
@@ -11,8 +12,9 @@ from google.genai import types
 from .body import SECTIONS, Body
 from .camera import Camera
 from .display import EMOTIONS
-from .memory import CATEGORIES, Memory
 from . import web
+from .lang import looks_foreign
+from .memory import CATEGORIES, Memory
 
 log = logging.getLogger(__name__)
 
@@ -51,7 +53,7 @@ DECLARATIONS = [
         name="body_status",
         description="Kendi donanım durumunu ölç: güç/voltaj, işlemci ısısı, CPU, bellek, disk, "
                     "wifi ve bağlantı, GPIO pinleri, I2C'ye bağlı cihazlar, ortam ışığı, ortam ses "
-                    "düzeyi, kamera ve sistemler, Gemini token kullanımı (kota). Kullanıcı nasıl "
+                    "düzeyi, hoparlör ses düzeyi, kamera ve sistemler, Gemini token kullanımı (kota). Kullanıcı nasıl "
                     "olduğunu, ısını, pilini/gücünü, pinlerini, sensörlerini, ne kadar kota/token "
                     "harcadığını sorduğunda kullan. 'uyarılar' boş değilse söyle.",
         parameters_json_schema=_params({
@@ -115,6 +117,8 @@ DECLARATIONS = [
 
 
 VOLUME_STEP = 15
+# Yanlis duyulan (yabanci dil/gurultu) bir sozle yapilmamasi gereken isler
+GUARDED = {"move", "remember", "forget", "volume", "shutdown"}
 
 
 class Tools:
@@ -126,19 +130,32 @@ class Tools:
         self.face = None  # LiveBrain.attach_face
         self.motors = None  # LiveBrain.attach_motors
         self.radio = None  # LiveBrain.attach_radio
+        self.heard = lambda: ""  # LiveBrain: kullanicinin su anki sozunun yazisi
+        self.on_shutdown = None  # robot.py: on_shutdown("robot" | "sistem")
 
     def declarations(self) -> list[types.FunctionDeclaration]:
         """Sabit araclar + istasyon listesine gore radyo ve ses duzeyi."""
         decls = list(DECLARATIONS)
         decls.append(types.FunctionDeclaration(
             name="volume",
-            description="Hoparlör ses düzeyini değiştir (robotun sesi ve radyo birlikte). Kullanıcı "
-                        "sesini aç/kıs, daha yüksek/alçak konuş dediğinde kullan.",
+            description="Hoparlör ses düzeyini öğren ya da değiştir. Kullanıcı ses düzeyini sorduğunda "
+                        "'sor'; sesini aç/kıs, daha yüksek/alçak konuş dediğinde değiştir.",
             parameters_json_schema=_params({
-                "action": {"type": "string", "enum": ["artır", "azalt", "ayarla"]},
+                "action": {"type": "string", "enum": ["sor", "artır", "azalt", "ayarla"]},
                 "level": {"type": "integer", "description": "ayarla için 0-100 arası yüzde"},
             }, ["action"]),
         ))
+        if self.on_shutdown:
+            decls.append(types.FunctionDeclaration(
+                name="shutdown",
+                description="Kendini kapat. Yalnızca kullanıcı açıkça 'sistemi kapat', 'kendini kapat' "
+                            "ya da 'robotu kapat' dediğinde kullan; önce kısaca veda et. 'sistem': "
+                            "Raspberry Pi tamamen kapanır (fişi çekmek güvenli olur); 'robot': yalnızca "
+                            "robot programı kapanır, Pi açık kalır.",
+                parameters_json_schema=_params({
+                    "target": {"type": "string", "enum": ["sistem", "robot"]},
+                }, ["target"]),
+            ))
         if self.radio:
             decls.append(types.FunctionDeclaration(
                 name="radio",
@@ -156,6 +173,12 @@ class Tools:
     async def handle(self, call: types.FunctionCall) -> types.FunctionResponse:
         args = call.args or {}
         log.info("arac cagrisi: %s %s", call.name, args)
+        heard = self.heard()
+        if call.name in GUARDED and looks_foreign(heard):
+            log.info("arac reddedildi, soz Turkce degil: %r", heard)
+            return types.FunctionResponse(id=call.id, name=call.name, response={
+                "error": "Kullanıcının son sözü anlaşılamadı (yabancı dil ya da gürültü), işlem "
+                         "yapılmadı. Kısaca anlayamadığını söyle ve tekrar etmesini iste."})
         try:
             if call.name == "look":
                 return self._look(call)
@@ -165,6 +188,8 @@ class Tools:
                 result = await getattr(web, call.name)(**args)
             elif call.name == "radio":
                 result = await self._radio(**args)
+            elif call.name == "shutdown":
+                result = self._shutdown(**args)
             elif call.name in ("move", "stop"):
                 if not self.motors:
                     result = {"error": "Motorlar bağlı değil."}
@@ -188,8 +213,30 @@ class Tools:
             return await self.radio.play(station)
         return self.radio.status()
 
+    def _shutdown(self, target: str = "sistem") -> dict:
+        if not self.on_shutdown:
+            return {"error": "Kapatma bağlı değil."}
+        # Veda cumlesi calinsin diye kapatma, konusma bitince yapilir
+        asyncio.create_task(self._shutdown_after_speech(target), name="shutdown")
+        what = "Raspberry Pi kapanıyor" if target == "sistem" else "Robot programı kapanıyor"
+        return {"result": f"{what}; konuşman bitince kapanacak. Kısaca veda et."}
+
+    async def _shutdown_after_speech(self, target: str) -> None:
+        for _ in range(30):  # veda sesi baslasin (en fazla 3 sn)
+            if self._speaker.busy:
+                break
+            await asyncio.sleep(0.1)
+        for _ in range(150):  # bitsin (en fazla 15 sn)
+            if not self._speaker.busy:
+                break
+            await asyncio.sleep(0.1)
+        log.info("kapatma: %s", target)
+        self.on_shutdown(target)
+
     def _volume(self, action: str, level: int | None = None) -> dict:
         v = self._speaker.volume
+        if action == "sor":
+            return {"ses_düzeyi_%": v}
         if action == "ayarla" and level is not None:
             v = level
         elif action in ("artır", "azalt"):

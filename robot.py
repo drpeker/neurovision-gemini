@@ -10,6 +10,7 @@ import logging
 import logging.handlers
 import os
 import signal
+import subprocess
 import sys
 import tomllib
 from pathlib import Path
@@ -128,6 +129,13 @@ async def run(cfg: dict) -> None:
     motors = make_motors(cfg, brain)
 
     task = asyncio.create_task(brain.run(), name="brain")
+    stop_target = []
+
+    def on_shutdown(target: str) -> None:
+        stop_target.append(target)
+        task.cancel()
+
+    brain.attach_shutdown(on_shutdown)
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, task.cancel)
@@ -149,6 +157,11 @@ async def run(cfg: dict) -> None:
             await face.stop()
         memory.close()
         log.info("kapatildi")
+    if stop_target == ["sistem"]:
+        # sudoers izni gerekir: deploy/allow-poweroff.sh
+        r = subprocess.run(["sudo", "-n", "systemctl", "poweroff"], capture_output=True, text=True)
+        if r.returncode:
+            log.warning("Pi kapatilamadi (deploy/allow-poweroff.sh calistirildi mi?): %s", r.stderr.strip())
 
 
 def make_motors(cfg: dict, brain):

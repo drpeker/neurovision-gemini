@@ -37,6 +37,7 @@ class LiveBrain:
         self.body = Body(cfg, camera, self.gate, memory)
         self.body.speaker = speaker
         self._tools = Tools(camera, memory, self.body, speaker)
+        self._tools.heard = lambda: "".join(self._heard)
         self.face = None  # attach_face ile (nv.display.Face)
         self.motors = None  # attach_motors ile (nv.motors.Motors)
         self._frame_on_speech = cfg["camera"]["enabled"] and cfg["camera"]["frame_on_speech"]
@@ -56,6 +57,9 @@ class LiveBrain:
     def attach_motors(self, motors) -> None:
         self.motors = motors
         self._tools.motors = motors
+
+    def attach_shutdown(self, fn) -> None:
+        self._tools.on_shutdown = fn
 
     def attach_radio(self, radio) -> None:
         self._tools.radio = radio

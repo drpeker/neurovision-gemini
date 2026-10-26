@@ -31,6 +31,29 @@ COLORS = {
     "user": (150, 150, 165), "robot": (225, 240, 255), "radio": (40, 210, 255),
 }
 FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+FONT_BOLD = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+
+
+def splash(w: int, h: int) -> bytes:
+    """Acilis ekrani: renkli "Peker", altinda "AI Technology" (RGB565)."""
+    import colorsys
+
+    from PIL import Image, ImageDraw, ImageFont
+    img = Image.new("RGB", (w, h))
+    draw = ImageDraw.Draw(img)
+    big = ImageFont.truetype(FONT_BOLD, 58)
+    small = ImageFont.truetype(FONT, 22)
+    word = "Peker"
+    x = (w - draw.textlength(word, font=big)) / 2
+    for i, ch in enumerate(word):
+        # Harf harf gok kusagi: maviden mora, turuncuya
+        r, g, b = colorsys.hsv_to_rgb(0.55 + i * 0.12, 0.85, 1.0)
+        draw.text((x, h * 0.47), ch, font=big, fill=(int(r * 255), int(g * 255), int(b * 255)),
+                  anchor="ls")
+        x += draw.textlength(ch, font=big)
+    draw.line((w * 0.2, h * 0.54, w * 0.8, h * 0.54), fill=(40, 210, 255), width=2)
+    draw.text((w / 2, h * 0.63), "AI Technology", font=small, fill=(225, 240, 255), anchor="ms")
+    return b"".join(rgb(*px) for px in img.getdata())
 
 
 class Panel:
@@ -217,7 +240,10 @@ class Face:
 
     # --- dongu ---
     async def start(self) -> None:
-        await self._run_panel(self._panel.blit, self._canvas.buf, 0, self._panel.h - 1)
+        w, h = self._panel.w, self._panel.h
+        logo = await asyncio.get_running_loop().run_in_executor(self._pool, splash, w, h)
+        await self._run_panel(self._panel.blit, bytearray(logo), 0, h - 1)
+        await self._backlight(time.monotonic())
         self._task = asyncio.create_task(self._loop(), name="display")
         log.info("ekran hazir: %dx%d", self._panel.w, self._panel.h)
 
@@ -238,6 +264,10 @@ class Face:
         return "idle"
 
     async def _loop(self) -> None:
+        # Acilis ekrani kalsin (robot bu arada ortami dinleyip baglaniyor), sonra yuz
+        await asyncio.sleep(self._cfg["splash_s"])
+        await self._run_panel(self._panel.blit, self._canvas.buf, 0, self._panel.h - 1)
+        self._status_key = None
         while True:
             try:
                 await self._frames()

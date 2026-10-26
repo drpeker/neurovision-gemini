@@ -92,6 +92,8 @@ dim = 25
 dim_after_s = 120
 # Bu sicakliktan sonra gozler turuncu
 hot_c = 75
+# Acilista "Peker / AI Technology" ekrani bu kadar saniye kalir
+splash_s = 3
 # Altta altyazi: son soylenen (gri) ve robotun cevabi (beyaz); sessizlikten hold_s sonra silinir
 captions = true
 caption_lines = 3
