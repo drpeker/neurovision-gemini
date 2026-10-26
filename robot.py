@@ -116,6 +116,7 @@ async def run(cfg: dict) -> None:
     mic.start()
     brain = LiveBrain(cfg, key, mic, speaker, camera, memory)
     face = await make_face(cfg, speaker, brain)
+    motors = make_motors(cfg, brain)
 
     task = asyncio.create_task(brain.run(), name="brain")
     loop = asyncio.get_running_loop()
@@ -127,6 +128,8 @@ async def run(cfg: dict) -> None:
     except asyncio.CancelledError:
         pass
     finally:
+        if motors:
+            motors.close()  # once motorlar: her durumda dur
         mic.stop()
         speaker.stop()
         if camera:
@@ -135,6 +138,20 @@ async def run(cfg: dict) -> None:
             await face.stop()
         memory.close()
         log.info("kapatildi")
+
+
+def make_motors(cfg: dict, brain):
+    """Motor surucusu acilmazsa robot hareketsiz calismaya devam eder."""
+    if not cfg["motors"]["enabled"]:
+        return None
+    from nv.motors import Motors
+    try:
+        motors = Motors(cfg["motors"])
+    except Exception as e:
+        log.warning("motorlar acilamadi, hareketsiz devam: %s", e)
+        return None
+    brain.attach_motors(motors)
+    return motors
 
 
 async def make_face(cfg: dict, speaker: Speaker, brain):

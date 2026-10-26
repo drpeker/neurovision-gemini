@@ -60,6 +60,7 @@ tail -f logs/robot.log                  # canlı log
 | `nv/tools.py` | Modelin çağırdığı araçlar (`look`, `remember`, `recall`, `forget`, `body_status`) |
 | `nv/body.py` | Öz farkındalık (`body_status`): güç, ısı, CPU, RAM, disk, wifi, GPIO, I²C, ışık, ses, alt sistemler, Gemini token kullanımı (`kota`). Yalnızca okur |
 | `nv/display.py` | Robotun yüzü: ST7789 ekranda gözler, durum (dinliyor/düşünüyor/konuşuyor/bakıyor), duygular (`express`), arka ışık |
+| `nv/motors.py` | Paletler (L298N): `move`/`stop`, yumuşak kalkış/duruş, 3 sn sınır, bağlantı kopunca durma, hareket sırasında mikrofon susturma |
 | `nv/debug.py` | Teşhis: son 10 konuşmanın sesi ve oturum talimatı (`logs/debug/`) |
 | `nv/memory.py` | SQLite hafıza: döküm, özetler, kalıcı bilgiler |
 | `nv/summarizer.py` | Sessizlikte özet + otomatik bilgi çıkarma |

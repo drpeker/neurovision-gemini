@@ -23,10 +23,13 @@ class Camera:
     def __init__(self, width: int, height: int, fps: int, rotation: int = 0):
         runtime = Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp"))
         self._fifo = runtime / f"nv-camera-meta-{os.getpid()}"
+        # rpicam yalnizca 0/180 dondurur; 90/270 (yan takili kamera) kare istendiginde PIL ile
+        self._soft_rotation = rotation if rotation in (90, 270) else 0
+        self._rotated: tuple[float, bytes] | None = None
         self._args = [
             "-t", "0", "-n", "--codec", "mjpeg", "--quality", "70",
             "--width", str(width), "--height", str(height),
-            "--framerate", str(fps), "--rotation", str(rotation), "--flush",
+            "--framerate", str(fps), "--rotation", "180" if rotation == 180 else "0", "--flush",
             "--metadata", str(self._fifo), "--metadata-format", "txt", "-o", "-",
         ]
         self._proc = None
@@ -109,9 +112,23 @@ class Camera:
             del buf[:end + 2]
 
     def frame(self, max_age: float = 3.0) -> bytes | None:
-        if self.latest and time.monotonic() - self.latest_at <= max_age:
+        if not self.latest or time.monotonic() - self.latest_at > max_age:
+            return None
+        if not self._soft_rotation:
             return self.latest
-        return None
+        # Ayni kare icin bir kez dondur
+        if self._rotated and self._rotated[0] == self.latest_at:
+            return self._rotated[1]
+        import io
+
+        from PIL import Image
+        img = Image.open(io.BytesIO(self.latest))
+        # rotation saat yonunde derece; PIL transpose saat yonunun tersine
+        op = Image.Transpose.ROTATE_270 if self._soft_rotation == 90 else Image.Transpose.ROTATE_90
+        out = io.BytesIO()
+        img.transpose(op).save(out, format="JPEG", quality=80)
+        self._rotated = (self.latest_at, out.getvalue())
+        return self._rotated[1]
 
     async def stop(self) -> None:
         for task in (self._task, self._meta_task):

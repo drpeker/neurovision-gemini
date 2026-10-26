@@ -61,6 +61,24 @@ DECLARATIONS = [
         }, []),
     ),
     types.FunctionDeclaration(
+        name="move",
+        description="Paletlerle hareket et. Kullanıcı ileri/geri gitmeni ya da sağa/sola dönmeni "
+                    "istediğinde kullan. Bir hareket en fazla 3 saniye sürer; daha uzun yol için "
+                    "adım adım ilerle ve gerekirse look ile önüne bak. Hareket ederken mikrofonun "
+                    "kapalıdır.",
+        parameters_json_schema=_params({
+            "direction": {"type": "string", "enum": ["ileri", "geri", "sol", "sag"],
+                          "description": "sol/sag: yerinde dönüş"},
+            "seconds": {"type": "number", "description": "0.2 ile 3 arası saniye; dönüşte 1 sn ≈ çeyrek tur"},
+            "speed": {"type": "string", "enum": ["yavaş", "normal", "hızlı"]},
+        }, ["direction", "seconds"]),
+    ),
+    types.FunctionDeclaration(
+        name="stop",
+        description="Hareketi hemen durdur. Kullanıcı 'dur' dediğinde ya da bir engel/tehlike "
+                    "gördüğünde kullan.",
+    ),
+    types.FunctionDeclaration(
         name="express",
         description="Yüzündeki ifadeyi ekranda birkaç saniye göster. Söylediğin şeye uygun bir "
                     "duygu olduğunda kullan (sevinç, şaşkınlık, üzüntü...). Her cümlede kullanma.",
@@ -84,6 +102,7 @@ class Tools:
         self._memory = memory
         self._body = body
         self.face = None  # LiveBrain.attach_face
+        self.motors = None  # LiveBrain.attach_motors
 
     async def handle(self, call: types.FunctionCall) -> types.FunctionResponse:
         args = call.args or {}
@@ -93,6 +112,13 @@ class Tools:
                 return self._look(call)
             if call.name == "body_status":
                 result = await self._body.status(args.get("section", "ozet"))
+            elif call.name in ("move", "stop"):
+                if not self.motors:
+                    result = {"error": "Motorlar bağlı değil."}
+                elif call.name == "move":
+                    result = await self.motors.move(**args)
+                else:
+                    result = await self.motors.stop()
             else:
                 result = getattr(self, f"_{call.name}")(**args)
         except Exception as e:

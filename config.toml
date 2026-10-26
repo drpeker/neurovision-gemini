@@ -15,6 +15,8 @@ orada yoksa recall ile ara. "Unut" denirse forget kullan. Hatırlamadığın şe
 Kendi bedenini hissedebilirsin: ısın, gücün, işlemcin, belleğin, pinlerin, bağlı sensörlerin,
 ortam ışığı ve ses düzeyi için body_status kullan; ölçmeden tahmin yürütme.
 Ekranında gözlerin var; söylediğine uygun bir duygu olduğunda express ile yüz ifadeni göster.
+Paletlerin var: kullanıcı isterse move ile hareket et, "dur" denirse hemen stop kullan.
+Hareket ederken kısa adımlar at; emin değilsen önce look ile önüne bak.
 """
 
 [audio]
@@ -49,8 +51,10 @@ width = 320
 height = 240
 # OV5647 1 kare/s'de cikti vermiyor; 2 en dusuk calisan deger
 fps = 2
-# rpicam yalnizca 0 veya 180 derece donduruyor
-rotation = 0
+# Kamera montaj acisi, saat yonunde: 0 / 90 / 180 / 270 (90 ve 270 yazilimda dondurulur)
+# Robotta kamera bas asagi takili ("Pi4 Fan" yazisiyla dogrulandi): 180 -> rpicam donanimda dondurur.
+# 180 derece sag/solu da degistirir; ayarsizken robot sola bakinca saga donuyordu.
+rotation = 180
 # true: her konusma basinda modele kare gider; false: yalnizca model look ile isteyince
 frame_on_speech = false
 
@@ -72,6 +76,29 @@ dim = 25
 dim_after_s = 120
 # Bu sicakliktan sonra gozler turuncu
 hot_c = 75
+
+[motors]
+# L298N, 2S besleme. Pinler ve yonler testle dogrulandi (sol A, sag B kablo ters)
+enabled = true
+pwm_hz = 200
+# Yumusak kalkis/durus: guc ramp_start'tan hedefe ramp_up_ms'de cikar, sonda ramp_down_ms'de iner
+ramp_start = 25
+ramp_up_ms = 500
+ramp_down_ms = 300
+# Hiz (%): duz / donus / tavan / taban (L298N'de ~%35 altinda yerde kalkmiyor)
+drive_speed = 42
+turn_speed = 55
+max_speed = 70
+min_speed = 35
+max_seconds = 3.0
+reverse_pause_ms = 150
+# Motor durduktan sonra mikrofon bu kadar daha kapali (ms)
+mute_tail_ms = 400
+# Bu sicaklikta ya da dusuk voltajda hiz bu oranla carpilir
+hot_c = 75
+derate = 0.6
+left = { in1 = 23, in2 = 24, en = 12, invert = false }
+right = { in1 = 27, in2 = 22, en = 13, invert = true }
 
 [memory]
 # Pi'de yerel SQLite; git disinda
@@ -108,12 +135,12 @@ i2c_buses = [1]
 
 # Pin planimizdaki gorevler (henuz takili olmayanlar "planlı")
 [body.pin_names]
-12 = "motor ENA (planlı)"
-13 = "motor ENB (planlı)"
-22 = "motor IN4 (planlı)"
-23 = "motor IN1 (planlı)"
-24 = "motor IN2 (planlı)"
-27 = "motor IN3 (planlı)"
+12 = "sol motor ENA (PWM)"
+13 = "sağ motor ENB (PWM)"
+22 = "sağ motor IN4"
+23 = "sol motor IN1"
+24 = "sol motor IN2"
+27 = "sağ motor IN3"
 25 = "ekran DC"
 5 = "ekran RST"
 8 = "ekran CS (SPI CE0)"

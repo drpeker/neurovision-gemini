@@ -37,6 +37,7 @@ class LiveBrain:
         self.body = Body(cfg, camera, self.gate, memory)
         self._tools = Tools(camera, memory, self.body)
         self.face = None  # attach_face ile (nv.display.Face)
+        self.motors = None  # attach_motors ile (nv.motors.Motors)
         self._frame_on_speech = cfg["camera"]["enabled"] and cfg["camera"]["frame_on_speech"]
         d = cfg["debug"]
         self._rec = DebugRecorder(Path(d["dir"]), d["keep"]) if d["enabled"] else None
@@ -50,6 +51,10 @@ class LiveBrain:
     def attach_face(self, face) -> None:
         self.face = face
         self._tools.face = face
+
+    def attach_motors(self, motors) -> None:
+        self.motors = motors
+        self._tools.motors = motors
 
     def _instruction(self) -> str:
         m = self._cfg["memory"]
@@ -148,6 +153,9 @@ class LiveBrain:
                         raise t.exception()
             finally:
                 self.body.connected_since = None
+                if self.motors:
+                    # Beyinle baglanti koptu: robot kontrolsuz hareket etmesin
+                    self.motors.halt()
                 for t in tasks:
                     t.cancel()
         log.info("baglanti yenileniyor")
@@ -156,8 +164,9 @@ class LiveBrain:
         self.gate.reset()
         while True:
             frame = await self._mic.frames.get()
-            if self._speaker.busy:
-                # Yari cift yonlu: robot konusurken kendi sesini dinleme
+            if self._speaker.busy or (self.motors and self.motors.busy):
+                # Yari cift yonlu: robot konusurken ya da motorlar donerken mikrofon susar;
+                # kendi sesi / motor sesi modele gitmez, token harcanmaz
                 if self.gate.active:
                     await s.send_realtime_input(audio_stream_end=True)
                     if self._rec:
