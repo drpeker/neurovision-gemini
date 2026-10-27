@@ -105,12 +105,26 @@ class Tracker:
             if deg >= angle:
                 return duty, 0.25, deg
         duty, deg = c["turn_table"][-1]
+        rate = c.get("turn_rate_dps")
+        if rate:
+            # Ilk 0.25 sn kalkista gider; sonra donus bu hizla surer (yerde olculdu)
+            seconds = min(c["pulse_max"], 0.25 + (angle - deg) / rate)
+            return duty, seconds, deg + (seconds - 0.25) * rate
         seconds = min(c["pulse_max"], 0.25 * angle / deg)
         return duty, seconds, deg * seconds / 0.25
 
-    async def _moved(self, before: bytes, after: bytes, expected: float) -> bool:
-        """Darbe sonrasi goruntu kaydi mi? Art arda takilmada False (takip durmali)."""
-        deg = await self._detector.shift(before, after, self._cfg["hfov_deg"])
+    async def _moved(self, before: bytes, after: bytes, expected: float,
+                     target_deg: float | None = None) -> bool:
+        """Darbe sonrasi donuldu mu? Art arda takilmada False (takip durmali).
+
+        target_deg: hedefin kadrajdaki kaymasi (derece); yoksa goruntu kaymasi olculur.
+        """
+        if target_deg is not None:
+            deg = target_deg
+        elif expected > self._cfg["hfov_deg"] / 2:
+            return True  # iki kare ortusmez, goruntu kaymasi olculemez: karar verme
+        else:
+            deg = await self._detector.shift(before, after, self._cfg["hfov_deg"])
         if deg < self._cfg["stall_ratio"] * expected:
             self._stalls += 1
             log.info("takip: donus beklenenden az (%.1f / %.0f derece), %d. kez", deg, expected, self._stalls)
@@ -153,23 +167,32 @@ class Tracker:
     async def _run(self, target: str, seconds: float) -> None:
         c = self._cfg
         name = self._label()
-        end = time.monotonic() + seconds
+        start = time.monotonic()
         prev_cx, last_dir, searched = None, 1, 0
         turned = None  # (donusten onceki sapma, beklenen derece)
         pulse = None  # (donusten onceki kare, beklenen derece): takilma kontrolu
         self._boost, self._stalls = 1.0, 0
         self.last_seen = 0.0
-        announced = False
+        announced = lost = False  # lost: "kayboldu" denildi, bulununca "tekrar bulundu" denir
         try:
             settled = await self._settle()
-            while time.monotonic() < end:
+            # Sure hedefin son goruldugu andan sayilir: gordukce takip surer (en fazla max_timeout_s)
+            while (time.monotonic() - max(start, self.last_seen) < seconds
+                   and time.monotonic() - start < c["max_timeout_s"]):
                 jpeg = await self._frame_after(settled)
                 if not jpeg:
                     log.warning("takip: kamera karesi yok")
                     await self._say("Takip durdu: kameradan görüntü alınamadı. Kısaca söyle.")
                     return
+                found = (await self._detector.find_color(jpeg, self.color) if target == COLORED
+                         else await self._detector.detect(jpeg))
+                hit = self._pick(found, prev_cx)
                 if pulse:
-                    moved = await self._moved(pulse[0], jpeg, pulse[1])
+                    # Hedef donusten once ve sonra gorunduyse kadrajdaki kaymasi donusu gosterir;
+                    # buyuk donuste iki kare ortusmez, goruntu kaymasi ~0 olcup "takildi" diyordu
+                    target_deg = (abs(turned[0] - (hit.cx - 0.5)) * c["hfov_deg"]
+                                  if hit and turned else None)
+                    moved = await self._moved(pulse[0], jpeg, pulse[1], target_deg)
                     pulse = None
                     if not moved:
                         log.warning("takip durdu: motorlar donmuyor (batarya/koruma/sikisma?)")
@@ -182,9 +205,6 @@ class Tracker:
                             await self._say("Takip durdu: motor pinlerine sinyal gitmiyor, bu bir yazılım "
                                             "sorunu. Kullanıcıya kısaca söyle; yeniden başlatma gerekebilir.")
                         return
-                found = (await self._detector.find_color(jpeg, self.color) if target == COLORED
-                         else await self._detector.detect(jpeg))
-                hit = self._pick(found, prev_cx)
                 now = time.monotonic()
                 if hit:
                     self.last_seen, searched = now, 0
@@ -199,6 +219,10 @@ class Tracker:
                     if not announced:
                         announced = True
                         await self._say(f"Takip: {name} görüldü, ona dönüyorsun. Bunu tek kısa cümleyle söyle.")
+                    elif lost:
+                        await self._say(f"Takip: {name} tekrar bulundu, ona dönüyorsun. "
+                                        "Bunu tek kısa cümleyle söyle.")
+                    lost = False
                     if abs(e) > c["center_tolerance"]:
                         turned = (e, await self.turn_toward(e))
                         pulse = (jpeg, turned[1])
@@ -217,16 +241,19 @@ class Tracker:
                     await self._say(f"Takip bitti: {name} bulunamadı. Bunu tek kısa cümleyle söyle.")
                     return
                 if searched == 0 and announced:
+                    lost = True
                     await self._say(f"Takip: {name} kayboldu, arıyorsun. Bunu tek kısa cümleyle söyle.")
                 searched += 1
                 duty = c["search_duty"]
-                deg = dict(c["turn_table"]).get(duty, 11) * c["search_pulse"] / 0.25
-                pulse = (jpeg, deg)
+                # Aramada takilma kontrolu yok: hedef cikinca kamera cogu zaman duz duvara bakar,
+                # goruntu kaymasi olculemez (~0 derece) ve donen robot "takildi" sayiliyordu
+                pulse = None
                 await self._motors.move("sol" if last_dir < 0 else "sag", c["search_pulse"],
                                         duty=duty, soft=False)
                 settled = await self._settle()
                 await asyncio.sleep(c["listen_s"])
             log.info("takip suresi doldu: %s", target)
+            await self._say(f"Takip bitti: süre doldu ({name}). Bunu tek kısa cümleyle söyle.")
         finally:
             if self.face:
                 self.face.gaze(None)

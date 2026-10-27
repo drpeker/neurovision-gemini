@@ -113,8 +113,10 @@ class Motors:
         self._lg.tx_pwm(self._h, side["en"], self._cfg["pwm_hz"], min(100.0, duty))
 
     def _set(self, left: int, right: int, duty: float) -> None:
-        self._drive(self._sides["sol"], left, duty)
-        self._drive(self._sides["sag"], right, duty)
+        # trim: motorlar ayni gucte ayni hizda donmuyor; yavas tarafin gucu bu oranla carpilir
+        for name, direction in (("sol", left), ("sag", right)):
+            side = self._sides[name]
+            self._drive(side, direction, duty * side.get("trim", 1.0))
 
     def halt(self) -> None:
         """Senkron, aninda dur (cikis, hata, baglanti kopmasi)."""
@@ -160,7 +162,13 @@ class Motors:
         c = self._cfg
         # Cok kisa hareket rampada kaybolur, palet yerde kalkmaz: en az min_seconds
         seconds = max(c["min_seconds"], min(float(seconds), c["max_seconds"]))
+        # Sesli donus (duty verilmez; takip ve arama kendi duty degerini verir): yerinde donmek
+        # duz gitmekten fazla guc ister. Yumusak rampa kisa donusun gucunu yiyordu, kisa rampa kullan.
+        spoken_turn = duty is None and direction in ("sol", "sag")
         target = min(duty, c["max_speed"]) if duty else self.duty(direction, speed)
+        if spoken_turn:
+            target = max(target, c.get("turn_min_speed", 0))
+            soft = False
         duty = max(target * self._derate(), c["min_speed"])
         await self._cancel()
         self._moving_until = time.monotonic() + seconds + 0.5

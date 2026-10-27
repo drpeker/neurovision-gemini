@@ -240,9 +240,14 @@ class Tools:
                 if not self.motors:
                     result = {"error": "Motorlar bağlı değil."}
                 elif call.name == "move":
+                    tracking = self.tracker and self.tracker.active
                     if self.tracker:
                         await self.tracker.stop()  # elle hareket takibi bitirir
                     result = await self.motors.move(**args)
+                    if tracking:
+                        # Model takibin surdugunu sanip "takipteyim" diyordu
+                        result["takip"] = ("Bu hareket takibi bitirdi; takip artık kapalı. Kullanıcıya "
+                                           "kısaca söyle. Takip ederken ileri yürüyemezsin.")
                 else:
                     if self.tracker:
                         await self.tracker.stop()

@@ -133,6 +133,9 @@ drive_speed = 32
 turn_speed = 38
 max_speed = 70
 min_speed = 22
+# Sesli donusun en dusuk gucu (%): 30 ile 0.3-1 sn donus zayifti (yerde %28 ~5 derece/0.25 sn).
+# Takip ve arama bunu kullanmaz. Sesli donus ayrica kisa rampa (pulse_ramp_ms) kullanir.
+turn_min_speed = 36
 max_seconds = 3.0
 # En kisa hareket; model "biraz" icin 0.2 sn seciyor
 min_seconds = 0.25
