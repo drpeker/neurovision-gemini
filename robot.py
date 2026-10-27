@@ -215,7 +215,21 @@ async def make_face(cfg: dict, speaker: Speaker, brain):
     face = Face(cfg["display"], panel, speaker, brain.gate, brain.body)
     await face.start()
     brain.attach_face(face)
+    asyncio.create_task(show_wifi_setup(face), name="wifi-durum")
     return face
+
+
+async def show_wifi_setup(face) -> None:
+    """Wi-Fi kurulum servisi (deploy/wifi) calisirken talimati altyazida tut."""
+    status = Path("/run/neurovision-wifi.txt")
+    while True:
+        try:
+            text = status.read_text().strip()
+        except OSError:
+            text = ""
+        if text:
+            face.caption(text, "warn")
+        await asyncio.sleep(5)
 
 
 def main() -> None:
