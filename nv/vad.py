@@ -9,6 +9,7 @@ Radyo calarken ucuncu sart: mikrofon, hoparlore giden radyonun beklenen yankisin
 echo_margin_db ustunde olmali. Yanki orani (mikrofon - radyo, dB) konusma yokken ogrenilir.
 """
 
+import numpy as np
 import math
 from array import array
 from collections import deque
@@ -32,19 +33,19 @@ def frame_db(frame: bytes) -> float:
     return 20 * math.log10(max(rms, 1.0) / 32768)
 
 
-ARM_FRAMES = 40  # 800 ms
+ARM_FRAMES = 40  # 800 ms: komutu veren cumlenin sonu durdurmasin
+BARGE_HZ = (120, 900)  # motor sesi yukarida (4-8 kHz); konusma burada 15-22 dB yukselir, sessizde en fazla 4 dB
 
 
 class MotionBarge:
-    """Motor donerken konusma: mikrofon motor gurultusuyle dolu, SpeechGate calismaz.
+    """Motor donerken konusma: toplam seviye motor gurultusune gomuluyor, bu bant ayriliyor.
 
-    Son 1 sn'nin ortanca seviyesinin (motor gurultusu) rise_db ustunde, en az floor_db olan
-    kareler sayilir; son 400 ms'de need kare olursa True. 6 V'ta motor -22 dBFS, tepe -16.5.
-    Ilk ARM_FRAMES karede bakilmaz: komutu veren cumlenin sonu durdurmasin.
+    Son 1 sn'nin ortanca bant enerjisinin rise_db ustundeki kareler sayilir; son 400 ms'de need
+    kare olursa True. Olcum: 2026-10-30, 6 V, 1 m'den "dur".
     """
 
-    def __init__(self, floor_db: float, rise_db: float = 7.0, need: int = 4):
-        self._floor, self._rise, self._need = floor_db, rise_db, need
+    def __init__(self, rise_db: float = 10.0, need: int = 4):
+        self._rise, self._need = rise_db, need
         self._levels: deque = deque(maxlen=50)
         self._hits: deque = deque(maxlen=20)
         self._seen = 0
@@ -55,11 +56,14 @@ class MotionBarge:
         self._seen = 0
 
     def feed(self, frame: bytes) -> bool:
-        db = frame_db(frame)
+        x = np.frombuffer(frame, dtype=np.int16) / 32768.0
+        spec = np.abs(np.fft.rfft(x * np.hanning(len(x)))) ** 2
+        bins = np.fft.rfftfreq(len(x), 1 / 16000)
+        level = 10 * math.log10(float(spec[(bins >= BARGE_HZ[0]) & (bins < BARGE_HZ[1])].sum()) / len(x) + 1e-12)
         self._seen += 1
         if self._seen >= ARM_FRAMES:
-            self._hits.append(db >= max(self._floor, sorted(self._levels)[len(self._levels) // 2] + self._rise))
-        self._levels.append(db)
+            self._hits.append(level >= sorted(self._levels)[len(self._levels) // 2] + self._rise)
+        self._levels.append(level)
         return sum(self._hits) >= self._need
 
 

@@ -39,7 +39,7 @@ class LiveBrain:
         self._tools = Tools(camera, memory, self.body, speaker)
         self._tools.heard = lambda: "".join(self._heard)
         self._tools.turn_only = cfg["motors"].get("turn_only", False)
-        self._barge = MotionBarge(cfg["motors"].get("barge_db", -19.0))
+        self._barge = MotionBarge()
         self.face = None  # attach_face ile (nv.display.Face)
         self.motors = None  # attach_motors ile (nv.motors.Motors)
         self._frame_on_speech = cfg["camera"]["enabled"] and cfg["camera"]["frame_on_speech"]

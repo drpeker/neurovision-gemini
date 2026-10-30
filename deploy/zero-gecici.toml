@@ -157,9 +157,6 @@ derate = 0.6
 # Duz gidiste yon duzeltmesi (jiroskop): derece basina guc orani ve tavani
 steer_per_deg = 0.04
 steer_max = 0.3
-# Motor donerken konusma bu seviyeyi (dBFS) ve motor gurultusunun 6 dB ustunu gecince robot durur
-# 0: kapali (hareket konusmayla kesilmez)
-barge_db = -15
 # en: yalnizca L298N'de kullanilir; MX1508'de GPIO12/13 bos
 left = { in1 = 23, in2 = 24, en = 12, invert = false }
 # ZERO: sag motor biraz yavas; kirmizi kutuyla ileri-geri sapma olculdu (2026-10-28): 1.1 ile sapma 0
