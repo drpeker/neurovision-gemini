@@ -20,6 +20,9 @@ from .vision import COCO80, COLORED, COLORS
 log = logging.getLogger(__name__)
 
 
+TURN_DPS = 60.0  # süreyle verilen dönüş <-> açı çevirisi (0.3 sn ~ 20 derece)
+
+
 def _params(props: dict, required: list[str]) -> dict:
     return {"type": "object", "properties": props, "required": required}
 
@@ -68,16 +71,19 @@ DECLARATIONS = [
     types.FunctionDeclaration(
         name="move",
         description="Paletlerle hareket et. Kullanıcı ileri/geri gitmeni ya da sağa/sola dönmeni "
-                    "istediğinde kullan. 'Hafifçe/biraz' kısa süre (0.3 sn), 'yavaşça' speed=yavaş, "
-                    "'çok yavaş' speed=çok yavaş demektir; ikisi birlikte de olabilir. Bir hareket en "
+                    "istediğinde kullan. Dönüşte (sol/sag) her zaman degrees ver: söylenen açı, 'biraz' 20, "
+                    "'çeyrek' 90, 'yarım tur' 180, 'tam tur' 360; dönüş bitince gerçek açı döner. İleri/"
+                    "geride seconds ver: 'hafifçe/biraz' kısa süre (0.3 sn). 'Yavaşça' speed=yavaş, "
+                    "'çok yavaş' speed=çok yavaş demektir; ikisi birlikte de olabilir. İleri/geri en "
                     "fazla 3 saniye sürer; daha uzun yol için adım adım ilerle ve gerekirse look ile "
                     "önüne bak. Hareket ederken mikrofonun kapalıdır.",
         parameters_json_schema=_params({
             "direction": {"type": "string", "enum": ["ileri", "geri", "sol", "sag"],
                           "description": "sol/sag: yerinde dönüş"},
-            "seconds": {"type": "number", "description": "0.25 ile 3 arası saniye; hafifçe 0.3, normal 1"},
+            "degrees": {"type": "number", "description": "sol/sag için dönüş açısı, 1 ile 720 arası derece"},
+            "seconds": {"type": "number", "description": "ileri/geri için 0.25 ile 3 arası saniye; hafifçe 0.3, normal 1"},
             "speed": {"type": "string", "enum": ["çok yavaş", "yavaş", "normal", "hızlı"]},
-        }, ["direction", "seconds"]),
+        }, ["direction"]),
     ),
     types.FunctionDeclaration(
         name="stop",
@@ -136,6 +142,7 @@ class Tools:
         self.heard = lambda: ""  # LiveBrain: kullanicinin su anki sozunun yazisi
         self.on_shutdown = None  # robot.py: on_shutdown("robot" | "sistem")
         self.tracker = None  # robot.py: nv.tracker.Tracker
+        self.turner = None  # LiveBrain.attach_turner (nv.imu.AngleTurner, MPU6050)
 
     def declarations(self) -> list[types.FunctionDeclaration]:
         """Sabit araclar + istasyon listesine gore radyo ve ses duzeyi."""
@@ -243,7 +250,7 @@ class Tools:
                     tracking = self.tracker and self.tracker.active
                     if self.tracker:
                         await self.tracker.stop()  # elle hareket takibi bitirir
-                    result = await self.motors.move(**args)
+                    result = await self._move(**args)
                     if tracking:
                         # Model takibin surdugunu sanip "takipteyim" diyordu
                         result["takip"] = ("Bu hareket takibi bitirdi; takip artık kapalı. Kullanıcıya "
@@ -292,12 +299,29 @@ class Tools:
         log.info("kapatma: %s", target)
         self.on_shutdown(target)
 
+    async def _move(self, direction: str, seconds: float | None = None, speed: str = "normal",
+                    degrees: float | None = None) -> dict:
+        turning = direction in ("sol", "sag")
+        if turning and self.turner:
+            # Jiroskopla; biten dönüş sonucu modele döner, sıradaki hareket bunu kesmez
+            degrees = min(720.0, abs(degrees or (seconds or 1.0) * TURN_DPS))
+            left = await self.turner.turn(degrees if direction == "sol" else -degrees)
+            if self.turner.stalled:
+                return {"error": "Motorlara güç gitti ama robot dönmedi (sıkışma ya da düşük batarya)."}
+            return {"result": f"{direction} yönünde {degrees - abs(left):.0f} derece dönüldü."}
+        if turning and degrees and seconds is None:
+            seconds = abs(degrees) / TURN_DPS  # jiroskop yok: açı süreye çevrilir
+        return await self.motors.move(direction, seconds or 1.0, speed)
+
     async def _turn_to(self, x: int) -> dict:
         await self.tracker.stop()
         e = max(0, min(1000, int(x))) / 1000 - 0.5
         if abs(e) <= self.tracker._cfg["center_tolerance"]:
             return {"result": "Nesne zaten tam önünde."}
-        await self.tracker.turn_toward(e)
+        if self.turner:
+            await self.turner.turn(-e * self.tracker._cfg["hfov_deg"])
+        else:
+            await self.tracker.turn_toward(e)
         return {"result": f"{'Sola' if e < 0 else 'Sağa'} döndüm; emin olmak için tekrar look ile bakabilirsin."}
 
     def _motor_speed(self, action: str, level: int | None = None) -> dict:

@@ -61,10 +61,16 @@ class LiveBrain:
         self._tools.motors = motors
         self.body.motors = motors
 
+    def attach_turner(self, turner) -> None:
+        self._tools.turner = turner
+        if self._tools.tracker:
+            self._tools.tracker.turner = turner
+
     def attach_tracker(self, tracker) -> None:
         self._tools.tracker = tracker
         self.body.tracker = tracker
         tracker.notify = self.notify
+        tracker.hold = lambda: self.gate.active  # kullanici konusurken donme
 
     async def notify(self, text: str) -> None:
         """Arka plandaki bir isten (takip) modele kisa olay bildirimi; model sesli soyler."""

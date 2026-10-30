@@ -1,17 +1,24 @@
-"""Nesne takibi: robot yalnizca yerinde donerek hedefi kadrajin ortasinda tutar.
+"""Nesne takibi: robot yerinde donerek hedefi kadrajin ortasinda tutar. Kisi takibinde ayrica
+durmadan surer: her karede sonar mesafesine gore ileri/geri, kisinin kadrajdaki yerine gore egri
+cizerek; follow_cm'de bekler (sonar gerekir).
 
-Dongu: hareket bittikten sonra cekilen yeni kare -> YOLO -> hedefin yatay konumu ->
-ortadan sapma kadar kisa donus darbesi. Hareket sirasindaki bulanik karelere bakilmaz.
+Dongu: robot durunca cekilen kare -> YOLO -> hedefin yatay konumu -> ortadan sapma kadar donus
+darbesi. Donerken de her yeni kareye bakilir: hedef ortaya gelince (ya da aramada gorununce)
+motor erken durdurulur; boylece hedef gecilmez ve kaybolunca yeri tahmin edilir.
 Hedef kaybolursa son goruldugu yone dogru adim adim aranir. Gemini dongude degil;
 yalnizca "buldum" / "kaybettim" anlarinda kisa bir bildirim alir.
 Takilma: her darbeden sonra goruntu kaymasi olculur; art arda stall_pulses darbede robot
-beklenenin cok altinda donduyse (batarya bitti, koruma kesti, palet sikisti) takip durur.
+beklenenin cok altinda donduyse ve goruntu de degismediyse (batarya bitti, koruma kesti,
+palet sikisti) takip durur. Hedefin az kaymasi yetmez: kisi robotla birlikte yuruyebilir.
 """
 
 import asyncio
+import collections
+import contextlib
 import logging
 import time
 
+from .imu import wrap
 from .vision import COCO80, COLORED, COLORS, Detection, Detector, turkish
 
 log = logging.getLogger(__name__)
@@ -25,16 +32,24 @@ class Tracker:
         self.target: str | None = None
         self.color: str | None = None  # istege bagli: "turuncu" kase, "siyah" fare
         self.last_seen = 0.0
-        self._boost = 1.0  # zemine gore guc carpani (takip boyunca ogrenilir)
+        self._boost = 1.0  # guc carpani; sabit (titrek tanimayla ogrenince buyuyup hedefi gecirtiyordu)
         self._stalls = 0  # art arda donmeyen darbe sayisi
         self.face = None  # gozler hedefe baksin
         self.notify = None  # LiveBrain: kisa olay bildirimi (metin)
+        self.hold = None  # brain: kullanici konusuyor ya da sozu henuz anlasilmadi (bool donduren)
+        self.turner = None  # nv.imu.AngleTurner (MPU6050): donusler aciyla, takilma jiroskopla
+        self._world: float | None = None  # hedefin yonu (jiroskop derecesi, sola pozitif)
+        self._world_v = 0.0  # hedefin acisal hizi (derece/sn): hizla cikan kisinin gittigi taraf
+        self._world_at = 0.0
+        self._world_hist: collections.deque = collections.deque(maxlen=40)  # (zaman, yon): hiz icin
 
     @property
     def active(self) -> bool:
         return bool(self._task and not self._task.done())
 
-    async def start(self, target: str, seconds: float | None = None, color: str | None = None) -> dict:
+    async def start(self, target: str, seconds: float | None = None, color: str | None = None,
+                    side: str | None = None) -> dict:
+        """side: "sol" / "sag" - hedef bastan gorunmuyorsa aramaya o yone baslanir (yoksa saga)."""
         if target not in COCO80 and target != COLORED:
             return {"error": f"'{target}' tanınan nesneler arasında yok; renkliyse colored object kullan."}
         if color and color not in COLORS:
@@ -46,7 +61,7 @@ class Tracker:
         c = self._cfg
         seconds = max(5.0, min(float(seconds or c["timeout_s"]), c["max_timeout_s"]))
         self.target = target
-        self._task = asyncio.create_task(self._run(target, seconds), name="tracker")
+        self._task = asyncio.create_task(self._run(target, seconds, side), name="tracker")
         log.info("takip basladi: %s%s (%.0f sn)", target, f" ({color})" if color else "", seconds)
         return {"result": f"{self._label()} takibi başladı ({seconds:.0f} sn). Bulunca ya da "
                           "kaybedince sana kısa bir bildirim gelecek; o zamana kadar konuşma."}
@@ -79,16 +94,16 @@ class Tracker:
 
     # --- dongu ---
     async def _settle(self) -> float:
-        """Motor dursun (mikrofon sessiz suresi dahil); durdugu ani dondur."""
-        while self._motors.busy:
+        """Motor dursun (mikrofonun susma payi beklenmez: goruntu hemen tazelenir); durdugu ani dondur."""
+        while self._motors.moving:
             await asyncio.sleep(0.05)
         return time.monotonic()
 
     async def _frame_after(self, t: float) -> bytes | None:
-        """t'den sonra cekilmis kare (hareket bulaniksiz)."""
+        """t'den sonra cekilmis kare (hareket bulaniksiz: robot durduktan settle_s sonra)."""
         deadline = time.monotonic() + 2.0
         while time.monotonic() < deadline:
-            if self._camera.latest_at > t + 0.05:
+            if self._camera.latest_at > t + self._cfg["settle_s"]:
                 return self._camera.frame()
             await asyncio.sleep(0.05)
         return None
@@ -103,7 +118,9 @@ class Tracker:
         angle = abs(e) * c["hfov_deg"] * self._boost
         for duty, deg in c["turn_table"]:
             if deg >= angle:
-                return duty, 0.25, deg
+                # Kucuk aci kisa darbeyle: dusuk PWM'de disli motorlar esit donmuyor, neredeyse duruyor
+                seconds = max(c["pulse_min"], 0.25 * angle / deg)
+                return duty, seconds, deg * seconds / 0.25
         duty, deg = c["turn_table"][-1]
         rate = c.get("turn_rate_dps")
         if rate:
@@ -114,23 +131,33 @@ class Tracker:
         return duty, seconds, deg * seconds / 0.25
 
     async def _moved(self, before: bytes, after: bytes, expected: float,
-                     target_deg: float | None = None) -> bool:
+                     target_deg: float | None = None, ignore: tuple = ()) -> bool:
         """Darbe sonrasi donuldu mu? Art arda takilmada False (takip durmali).
 
         target_deg: hedefin kadrajdaki kaymasi (derece); yoksa goruntu kaymasi olculur.
+        Az kayma tek basina yetmez: kisi robotla ayni yone yururse de az kayar. Takildi
+        sayilmasi icin hedef disindaki goruntu (ignore kutulari haric) de degismemis olmali.
         """
+        c = self._cfg
         if target_deg is not None:
             deg = target_deg
-        elif expected > self._cfg["hfov_deg"] / 2:
-            return True  # iki kare ortusmez, goruntu kaymasi olculemez: karar verme
+        elif expected > c["hfov_deg"] / 2:
+            deg = 0.0  # iki kare ortusmez, kayma olculemez: karar goruntu farkiyla verilir
         else:
-            deg = await self._detector.shift(before, after, self._cfg["hfov_deg"])
-        if deg < self._cfg["stall_ratio"] * expected:
-            self._stalls += 1
-            log.info("takip: donus beklenenden az (%.1f / %.0f derece), %d. kez", deg, expected, self._stalls)
-        else:
+            deg = await self._detector.shift(before, after, c["hfov_deg"])
+        if deg >= c["stall_ratio"] * expected:
             self._stalls = 0
-        return self._stalls < self._cfg["stall_pulses"]
+            return True
+        diff = await self._detector.change(before, after, list(ignore))
+        if diff is None or diff >= c["still_diff"]:
+            log.info("takip: hedef az kaydi (%.1f / %.0f derece) ama goruntu degisti (fark %s): donuldu",
+                     deg, expected, "?" if diff is None else f"{diff:.1f}")
+            self._stalls = 0
+            return True
+        self._stalls += 1
+        log.info("takip: donus beklenenden az (%.1f / %.0f derece, goruntu farki %.1f), %d. kez",
+                 deg, expected, diff, self._stalls)
+        return self._stalls < c["stall_pulses"]
 
     async def turn_toward(self, e: float) -> float:
         """Sapma kadar don (yumusak rampasiz, kalibre guc); beklenen derece."""
@@ -139,17 +166,46 @@ class Tracker:
         log.debug("takip: e=%+.2f -> %%%d %.2f sn (~%.0f derece, carpan %.2f)", e, duty, seconds, deg, self._boost)
         return deg
 
-    def _adapt(self, prev_e: float, e: float, expected_deg: float) -> None:
-        """Zemin farki: beklenenden az donduyse gucu artir, cok donduyse azalt."""
-        moved = abs(prev_e - e) * self._cfg["hfov_deg"]
-        if moved < 0.4 * expected_deg:
-            self._boost = min(2.0, self._boost * 1.3)
-        elif moved > 1.6 * expected_deg:
-            self._boost = max(0.6, self._boost * 0.8)
+    async def _watch(self, sign: int, since: float, prev_cx: float | None, search: bool) -> Detection | None:
+        """Donerken de bak: her yeni karede tanima; hedef ortaya gelince motoru hemen durdur.
 
-    def _pick(self, found: list[Detection], prev_cx: float | None) -> Detection | None:
-        th = 0.0 if self.target == COLORED else self._cfg["target_threshold"]
-        cand = [d for d in found if d.name == self.target and d.conf >= th]
+        Kare ve tanima ~0.25 sn gecikmeli: o surede robot donmeye devam etti, hedefin su anki yeri
+        track_rate_dps ile tahmin edilir. Aramada hedef gorunur gorunmez durulur. Son goruleni dondurur;
+        self._est_e (hedefin tahmini sapmasi) her gorulmede guncellenir.
+        """
+        c = self._cfg
+        seen, last_t = None, since
+        while self._motors.moving:
+            if self._camera.latest_at <= last_t:
+                await asyncio.sleep(0.01)
+                continue
+            last_t = self._camera.latest_at
+            jpeg = self._camera.frame()
+            found = (await self._detector.find_color(jpeg, self.color) if self.target == COLORED
+                     else await self._detector.detect(jpeg))
+            hit = self._pick(found, prev_cx)
+            if not hit:
+                continue
+            seen, prev_cx = hit, hit.cx
+            lag = time.monotonic() - (last_t - c["frame_lag_s"])
+            self._est_e = (hit.cx - 0.5) - sign * c["track_rate_dps"] * lag / c["hfov_deg"]
+            if search or sign * self._est_e <= c["center_tolerance"]:
+                await self._motors.stop(quiet=True)
+                log.debug("takip: donerken goruldu (sapma %+.2f), durduruldu", self._est_e)
+                break
+        return seen
+
+    def _pick(self, found: list[Detection], prev_cx: float | None, locked: bool = False) -> Detection | None:
+        """locked: hedef ortadayken onceki konumunun yakininda model esigindeki zayif tanima da sayilir
+        (kapali TV gibi hedefler karelerin bir kisminda esigin altina dusuyor)."""
+        c = self._cfg
+        th = c["color_threshold"] if self.target == COLORED else c["target_threshold"]
+
+        def ok(d: Detection) -> bool:
+            if d.conf >= th:
+                return True
+            return locked and prev_cx is not None and abs(d.cx - prev_cx) < c["lock_tolerance"]
+        cand = [d for d in found if d.name == self.target and ok(d)]
         if self.color:
             # Renk istendiyse: o renk kutunun ortasinda baskin renklerden biri olmali
             cand = [d for d in cand if self.color in d.colors]
@@ -160,18 +216,160 @@ class Tracker:
         # Birden fazla varsa onceki konuma en yakini: kisiden kisiye atlamasin
         return min(cand, key=lambda d: abs(d.cx - prev_cx) - d.conf * 0.1)
 
+    async def _gyro_turn(self, goal: float, prev_cx: float | None) -> tuple[Detection | None, bool]:
+        """Jiroskopla goal yonune don; donerken her yeni karede bak, hedef gorulurse yonu
+        (karenin cekildigi andaki robot yonu + kadrajdaki sapma) donus hedefi olur: hareket eden
+        hedef de yakalanir. (son gorulen, takildi mi) dondurur."""
+        c, imu = self._cfg, self.turner.imu
+        turn = asyncio.create_task(self.turner.turn_to(goal, settle=False), name="tracker-turn")
+        seen, last_t = None, self._camera.latest_at
+        try:
+            while not turn.done():
+                if self.hold and self.hold():
+                    # Kullanici konusmaya basladi: dur, cumle anlasilsin ("stop" ise takip zaten biter)
+                    log.info("takip: kullanici konusuyor, donus durduruldu")
+                    break
+                if self._camera.latest_at <= last_t:
+                    await asyncio.sleep(0.01)
+                    continue
+                last_t = self._camera.latest_at
+                hit = self._pick(await self._find(self._camera.frame()), prev_cx)
+                if hit:
+                    seen, prev_cx = hit, hit.cx
+                    self._set_world(self._world_of(hit, last_t), last_t)
+                    self.last_seen = time.monotonic()
+                    imu_h = imu.heading
+                    self.turner.target = imu_h + wrap(self._world - imu_h)
+            if turn.done():
+                await turn
+        finally:
+            if not turn.done():
+                turn.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await turn
+        return seen, self.turner.stalled
+
+    def _set_world(self, world: float, at: float) -> None:
+        # Hiz en az 0.4 sn arayla olculur: kisi takibinde kareler sik gelir ve kutunun titremesi
+        # (yuruyen bacaklar) kisa aralikta 10 derece/sn'lik sahte hiz uretip aramayi ters yone yolluyordu
+        self._world_hist.append((at, world))
+        old = next(((t, w) for t, w in self._world_hist if 0.4 <= at - t <= 1.5), None)
+        self._world_v = wrap(world - old[1]) / (at - old[0]) if old else 0.0
+        self._world, self._world_at = world, at
+
+    def _world_of(self, hit: Detection, frame_at: float) -> float:
+        c = self._cfg
+        return self.turner.imu.heading_at(frame_at - c["frame_lag_s"]) - (hit.cx - 0.5) * c["hfov_deg"]
+
+    async def _find(self, jpeg: bytes) -> list[Detection]:
+        return (await self._detector.find_color(jpeg, self.color) if self.target == COLORED
+                else await self._detector.detect(jpeg))
+
+    async def _report_stall(self) -> None:
+        log.warning("takip durdu: motorlar donmuyor (batarya/koruma/sikisma?)")
+        check = await self._motors.signal_check()
+        if check["pwm_sinyali"] == "var":
+            await self._say("Takip durdu: motor sinyalleri gidiyor ama dönemiyorsun; motor "
+                            "bataryası bitmiş ya da korumaya girmiş olabilir. Kullanıcıya "
+                            "kısaca söyle, bataryayı kontrol etmesini iste.")
+        else:
+            await self._say("Takip durdu: motor pinlerine sinyal gitmiyor, bu bir yazılım "
+                            "sorunu. Kullanıcıya kısaca söyle; yeniden başlatma gerekebilir.")
+
+    async def _listen_gap(self, seconds: float) -> None:
+        """Hareketten sonra kisa bak/dinle. Konusma baslarsa _held sonraki donusu cumle anlasilana
+        kadar bekletir (motor donerken mikrofon kapali: "dur" bu arada duyulur)."""
+        while self._motors.moving:
+            await asyncio.sleep(0.02)
+        await asyncio.sleep(seconds)
+
+    async def _held(self) -> bool:
+        """Kullanici konusurken donme: donus mikrofonu kapatir ve yarim cumle atilir ("stop" duyulmaz).
+
+        Soz anlasilana kadar (en fazla hold_max_s) bekler; beklediyse True, kare eskidi.
+        """
+        if not (self.hold and self.hold()):
+            return False
+        deadline = time.monotonic() + self._cfg["hold_max_s"]
+        while self.hold() and time.monotonic() < deadline:
+            await asyncio.sleep(0.05)
+        log.debug("takip: kullanici konusurken beklendi")
+        return True
+
+    async def _follow(self, hit: Detection, e: float) -> bool:
+        """Kisi takibi, bir kare: sure ya da dur. Surus komutu verildiyse True (sonraki kare hemen).
+
+        Mesafe sonardan (sonar bir sey gormuyorsa uzak sayilir, kutu kadraji doldurmuyorsa):
+        follow_cm + follow_band_cm'den uzaksa ileri, follow_cm - follow_band_cm'den yakinsa geri;
+        arada durur. Kisi cok yandaysa (follow_turn_e) durup jiroskopla doner (False).
+        """
+        c, motors = self._cfg, self._motors
+        sonar = motors.sonar
+        if self.target != "person" or not sonar or not c.get("follow_cm"):
+            return False
+        d = sonar.distance
+        if d is None:
+            way = 0 if hit.box[3] - hit.box[1] >= c["follow_box_h"] else 1
+        elif d > c["follow_cm"] + c["follow_band_cm"]:
+            way = 1
+        elif d < c["follow_cm"] - c["follow_band_cm"]:
+            way = -1
+        else:
+            way = 0
+        if way == 0 or abs(e) > c["follow_turn_e"] or (self.hold and self.hold()):
+            if motors.driving:
+                await motors.stop(quiet=True)
+            return False
+        if way > 0:
+            # Uzaklastikca hizlan: follow_duty'den, her 10 cm icin follow_duty_per_10cm fazla
+            far = c["follow_far_cm"] if d is None else d
+            duty = min(c["follow_duty_max"],
+                       c["follow_duty"] + (far - c["follow_cm"]) / 10 * c["follow_duty_per_10cm"])
+        else:
+            duty = c["follow_back_duty"]
+        # Kisi sagdaysa (e > 0) sola palet hizlansin; geri giderken tersi (onu kisiye doner)
+        steer = max(-c["follow_steer_max"], min(c["follow_steer_max"], c["follow_steer"] * e * way))
+        if not motors.driving:
+            log.info("takip: %s (sonar %s)", "kisiye yaklasiyor" if way > 0 else "geri cekiliyor",
+                     "bos" if d is None else f"{d:.0f} cm")
+        return await motors.drive(way, duty, steer, c["follow_hold_s"])
+
+    async def _back_off(self) -> None:
+        """Aramada onde engel (search_obstacle_cm icinde): donmeden once back_off_cm geri git.
+        Mesafe sonarla olculur (engel uzaklastikca), en fazla back_off_max_s."""
+        c, motors = self._cfg, self._motors
+        d0 = motors.sonar.distance if motors.sonar else None
+        if d0 is None or d0 >= c["search_obstacle_cm"]:
+            return
+        log.info("takip: aramada onde engel %.0f cm, %d cm geri", d0, c["back_off_cm"])
+        await motors.move("geri", c["back_off_max_s"], duty=c["follow_back_duty"], soft=False)
+        while motors.moving:
+            d = motors.sonar.distance
+            if d is not None and d >= d0 + c["back_off_cm"]:
+                await motors.stop(quiet=True)
+                break
+            await asyncio.sleep(0.02)
+        await self._listen_gap(c["listen_s"])
+
     async def _say(self, text: str) -> None:
         if self.notify:
             await self.notify(text)
 
-    async def _run(self, target: str, seconds: float) -> None:
+    async def _run(self, target: str, seconds: float, side: str | None = None) -> None:
         c = self._cfg
         name = self._label()
         start = time.monotonic()
-        prev_cx, last_dir, searched = None, 1, 0
+        prev_cx, last_dir, searched = None, -1 if side == "sol" else 1, 0
+        # Kilit: hedef ortalaninca robot durur; kucuk kaymalara (lock_tolerance) ve kacirilan karelere
+        # (lock_hold_s) donmez. Yoksa titreyen tanima her kayipta aramayi baslatip hedefi kadrajdan atiyordu
+        locked = False
         turned = None  # (donusten onceki sapma, beklenen derece)
         pulse = None  # (donusten onceki kare, beklenen derece): takilma kontrolu
         self._boost, self._stalls = 1.0, 0
+        # Hedefin tahmini sapmasi: gorulunce olculur, donuldukce kaydirilir; kaybolunca arama yonu bu
+        self._est_e = -0.3 if side == "sol" else 0.3
+        self._world, self._world_v, self._world_at = None, 0.0, 0.0
+        self._world_hist.clear()
         self.last_seen = 0.0
         announced = lost = False  # lost: "kayboldu" denildi, bulununca "tekrar bulundu" denir
         try:
@@ -179,41 +377,41 @@ class Tracker:
             # Sure hedefin son goruldugu andan sayilir: gordukce takip surer (en fazla max_timeout_s)
             while (time.monotonic() - max(start, self.last_seen) < seconds
                    and time.monotonic() - start < c["max_timeout_s"]):
+                if self.hold and self.hold():
+                    if self._motors.driving:
+                        await self._motors.stop(quiet=True)
+                    # Kullanici konusuyor: bakmayi da durdur, isleyici konusma tanimaya kalsin
+                    # (YOLO ile ayni anda 11 sn'lik konusmanin tanimasi 10 sn surdu)
+                    await asyncio.sleep(0.05)
+                    settled = time.monotonic()
+                    continue
                 jpeg = await self._frame_after(settled)
+                frame_at = self._camera.latest_at
                 if not jpeg:
                     log.warning("takip: kamera karesi yok")
                     await self._say("Takip durdu: kameradan görüntü alınamadı. Kısaca söyle.")
                     return
-                found = (await self._detector.find_color(jpeg, self.color) if target == COLORED
-                         else await self._detector.detect(jpeg))
-                hit = self._pick(found, prev_cx)
+                hit = self._pick(await self._find(jpeg), prev_cx, locked)
                 if pulse:
                     # Hedef donusten once ve sonra gorunduyse kadrajdaki kaymasi donusu gosterir;
                     # buyuk donuste iki kare ortusmez, goruntu kaymasi ~0 olcup "takildi" diyordu
+                    # Kadrajin kenarinda kesilen kutunun ortasi donusle birlikte kaymaz: olcu sayilmaz
+                    boxes = [b for b in (pulse[2], hit.box if hit else None) if b]
+                    edge = any(b[0] < 0.02 or b[2] > 0.98 for b in boxes)
                     target_deg = (abs(turned[0] - (hit.cx - 0.5)) * c["hfov_deg"]
-                                  if hit and turned else None)
-                    moved = await self._moved(pulse[0], jpeg, pulse[1], target_deg)
+                                  if hit and turned and not edge else None)
+                    moved = await self._moved(pulse[0], jpeg, pulse[1], target_deg, boxes)
                     pulse = None
                     if not moved:
-                        log.warning("takip durdu: motorlar donmuyor (batarya/koruma/sikisma?)")
-                        check = await self._motors.signal_check()
-                        if check["pwm_sinyali"] == "var":
-                            await self._say("Takip durdu: motor sinyalleri gidiyor ama dönemiyorsun; motor "
-                                            "bataryası bitmiş ya da korumaya girmiş olabilir. Kullanıcıya "
-                                            "kısaca söyle, bataryayı kontrol etmesini iste.")
-                        else:
-                            await self._say("Takip durdu: motor pinlerine sinyal gitmiyor, bu bir yazılım "
-                                            "sorunu. Kullanıcıya kısaca söyle; yeniden başlatma gerekebilir.")
+                        await self._report_stall()
                         return
                 now = time.monotonic()
                 if hit:
                     self.last_seen, searched = now, 0
                     e = hit.cx - 0.5  # <0: hedef goruntunun solunda
-                    prev_cx = hit.cx
-                    if turned:
-                        self._adapt(turned[0], e, turned[1])
-                        turned = None
-                    last_dir = -1 if e < 0 else 1
+                    prev_cx, self._est_e, turned = hit.cx, e, None
+                    if self.turner:
+                        self._set_world(self._world_of(hit, frame_at), frame_at)
                     if self.face:
                         self.face.gaze(e)
                     if not announced:
@@ -223,33 +421,108 @@ class Tracker:
                         await self._say(f"Takip: {name} tekrar bulundu, ona dönüyorsun. "
                                         "Bunu tek kısa cümleyle söyle.")
                     lost = False
+                    if await self._follow(hit, e):
+                        locked = False
+                        settled = time.monotonic() - c["settle_s"]  # suruyor: bir sonraki kare yeter
+                        continue
+                    if locked and abs(e) <= c["lock_tolerance"]:
+                        settled = now  # kilitli: kucuk kaymaya donme
+                        await asyncio.sleep(0.2)
+                        continue
+                    if locked:
+                        log.info("takip: kilit acildi (sapma %+.2f)", e)
+                        locked = False
                     if abs(e) > c["center_tolerance"]:
+                        if await self._held():
+                            settled = time.monotonic()  # beklerken hedef kaymis olabilir: yeni kare
+                            continue
+                        if self.turner:
+                            seen, stalled = await self._gyro_turn(self._world, prev_cx)
+                            if stalled:
+                                await self._report_stall()
+                                return
+                            prev_cx = seen.cx if seen else prev_cx
+                            await self._listen_gap(c["listen_s"])
+                            settled = time.monotonic()
+                            continue
+                        t0 = time.monotonic()
                         turned = (e, await self.turn_toward(e))
-                        pulse = (jpeg, turned[1])
+                        pulse = (jpeg, turned[1], hit.box)
+                        sign = -1 if e < 0 else 1
+                        if not await self._watch(sign, t0 + 0.05, prev_cx, search=False):
+                            # Donerken hic gorulmedi: donulen kadar kaydi (asiri donuste ters taraftan cikar)
+                            self._est_e -= sign * c["track_rate_dps"] * (time.monotonic() - t0) / c["hfov_deg"]
                         settled = await self._settle()
+                        # Erken durduysa takilma kontrolu donulen sure kadarini beklesin
+                        pulse = (jpeg, min(turned[1], c["track_rate_dps"] * (settled - t0)), hit.box)
                         # Dinleme araligi: mikrofon acik kalsin, "dur" duyulsun
                         await asyncio.sleep(c["listen_s"])
                     else:
+                        log.info("takip: %s ortada, kilitlendi", target)
+                        locked = True
                         settled = now  # ortada: donme, yeni kareyi bekle
                         await asyncio.sleep(0.2)
                     continue
-                if self.last_seen and now - self.last_seen < c["lost_s"]:
-                    settled = now  # kisa kayip: bir kare daha bak
+                if self._motors.driving:
+                    await self._motors.stop(quiet=True)  # kisi gorunmuyor: korlemesine surme
+                # Kilitliyken robot donmedi: hedef buyuk olasilikla hala orada, tanima kacirdi. Kisi
+                # yururken cikabilir; ona lost_s yeter
+                hold = c["lock_hold_s"] if locked and target != "person" else c["lost_s"]
+                if self.last_seen and now - self.last_seen < hold:
+                    settled = now
+                    await asyncio.sleep(0.2)
                     continue
-                if searched >= c["search_steps"]:
+                if locked:
+                    log.info("takip: %s %.0f sn gorunmedi, kilit acildi", target, now - self.last_seen)
+                    locked = False
+                if searched == 0 and self.turner and self._world is not None:
+                    gap = wrap(self._world - self.turner.imu.heading)  # sola pozitif
+                    if prev_cx is not None and abs(prev_cx - 0.5) > c["exit_edge"]:
+                        last_dir = -1 if prev_cx < 0.5 else 1  # kadrajin kenarindan cikti: o tarafa
+                    elif abs(self._world_v) > c["moving_dps"]:
+                        last_dir = -1 if self._world_v > 0 else 1  # hareket eden hedef: gittigi tarafa
+                    elif abs(gap) > 2:
+                        last_dir = -1 if gap > 0 else 1  # hedefin goruldugu yon tarafina
+                    elif prev_cx is not None and abs(prev_cx - 0.5) > 0.02:
+                        last_dir = -1 if prev_cx < 0.5 else 1  # kadrajdan ciktigi taraf
+                elif searched == 0 and abs(self._est_e) > 0.02:
+                    last_dir = -1 if self._est_e < 0 else 1  # hedefin tahmini yerine dogru ara
+                if await self._held():
+                    settled = time.monotonic()
+                    continue
+                steps = int(360 / c["sweep_step_deg"]) + 1 if self.turner else c["search_steps"]
+                if searched >= steps:
                     log.info("takip: %s bulunamadi, birakildi", target)
                     await self._say(f"Takip bitti: {name} bulunamadı. Bunu tek kısa cümleyle söyle.")
                     return
                 if searched == 0 and announced:
                     lost = True
                     await self._say(f"Takip: {name} kayboldu, arıyorsun. Bunu tek kısa cümleyle söyle.")
+                    log.info("takip: %s kayboldu, %s tarafa aranacak (son yer %s, hiz %+.0f derece/sn)", target,
+                             "sol" if last_dir < 0 else "sag", "?" if prev_cx is None else f"{prev_cx:.2f}",
+                             self._world_v)
+                await self._back_off()
                 searched += 1
+                if self.turner:
+                    # Once hedefin son goruldugu yone; orada yoksa ciktigi tarafa adim adim, en fazla bir tur
+                    h = self.turner.imu.heading
+                    far = self._world is not None and abs(wrap(self._world - h)) > c["hfov_deg"] * 0.3
+                    goal = self._world if searched == 1 and far else h - last_dir * c["sweep_step_deg"]
+                    seen, stalled = await self._gyro_turn(goal, None)
+                    if stalled:
+                        await self._report_stall()
+                        return
+                    await self._listen_gap(c["look_s"])
+                    settled = time.monotonic()
+                    continue
                 duty = c["search_duty"]
                 # Aramada takilma kontrolu yok: hedef cikinca kamera cogu zaman duz duvara bakar,
                 # goruntu kaymasi olculemez (~0 derece) ve donen robot "takildi" sayiliyordu
                 pulse = None
+                t0 = time.monotonic()
                 await self._motors.move("sol" if last_dir < 0 else "sag", c["search_pulse"],
                                         duty=duty, soft=False)
+                await self._watch(last_dir, t0 + 0.05, None, search=True)
                 settled = await self._settle()
                 await asyncio.sleep(c["listen_s"])
             log.info("takip suresi doldu: %s", target)

@@ -128,6 +128,7 @@ async def run(cfg: dict) -> None:
         face.radio = radio
     motors = make_motors(cfg, brain, memory)
     tracker = make_tracker(cfg, camera, motors, brain, face)
+    imu = await make_imu(cfg, motors, brain)
 
     task = asyncio.create_task(brain.run(), name="brain")
     stop_target = []
@@ -150,6 +151,8 @@ async def run(cfg: dict) -> None:
             await tracker.stop()
         if motors:
             motors.close()  # once motorlar: her durumda dur
+        if imu:
+            imu.stop()
         if radio:
             await radio.stop()
         mic.stop()
@@ -182,6 +185,25 @@ def make_tracker(cfg: dict, camera, motors, brain, face):
     tracker.face = face
     brain.attach_tracker(tracker)
     return tracker
+
+
+async def make_imu(cfg: dict, motors, brain):
+    """MPU6050: aciyla donus ve duz giderken yon koruma. Yoksa ya da cevap vermezse robot eskisi
+    gibi sure ve gucle hareket eder."""
+    c = cfg.get("imu", {})
+    if not (c.get("enabled") and motors):
+        return None
+    from nv.imu import AngleTurner, Imu
+    try:
+        imu = Imu(c["bus"], c.get("sign", 1), c.get("scale", 1.0))
+        await asyncio.to_thread(imu.calibrate)  # acilista robot duruyor
+    except Exception as e:
+        log.warning("MPU6050 cevap vermedi, sure ve gucle hareket: %s", e)
+        return None
+    imu.start()
+    motors.imu = imu
+    brain.attach_turner(AngleTurner(imu, motors, c))
+    return imu
 
 
 def make_motors(cfg: dict, brain, memory):

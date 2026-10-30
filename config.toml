@@ -145,6 +145,9 @@ mute_tail_ms = 400
 # Bu sicaklikta ya da dusuk voltajda hiz bu oranla carpilir
 hot_c = 75
 derate = 0.6
+# Duz gidiste yon duzeltmesi (jiroskop): derece basina guc orani ve tavani
+steer_per_deg = 0.04
+steer_max = 0.3
 # en: yalnizca L298N'de kullanilir; MX1508'de GPIO12/13 bos
 left = { in1 = 23, in2 = 24, en = 12, invert = false }
 right = { in1 = 27, in2 = 22, en = 13, invert = true }
@@ -157,10 +160,12 @@ threads = 2
 # Model esigi dusuk (fare gibi kucuk nesneler); takip edilecek hedef icin ayri esik
 threshold = 0.25
 target_threshold = 0.3
+# Renkli hedef: kirmizi kutu 1.0, ortamdaki sahte kirmizi bolgeler en fazla 0.4 olculdu
+color_threshold = 0.5
 # Hedef kadraj ortasina bu kadar yakinsa (genisligin orani) donulmez
 center_tolerance = 0.08
 # Kameranin yatay gorus acisi (OV5647 ~54 derece): sapma -> donulecek aci
-hfov_deg = 54
+hfov_deg = 56  # ZERO: 10 derecelik adimlarla iki yonde olculdu (2026-10-30): foto 56.4, video 55.8
 # Yerde olculdu (MX1508, 2S, 2026-10-27): [guc %, 0.25 sn rampasiz darbede donus derecesi]
 # %24'te 3, %40'ta 14 derece; takipte hiz duzeyi ve "yavas" uygulanmaz
 turn_table = [[24, 3], [28, 5.5], [32, 8], [36, 11], [40, 14]]
@@ -173,6 +178,25 @@ lost_s = 2.0
 search_steps = 8
 search_pulse = 0.5
 search_duty = 36
+# Takip jiroskopla: Zero'da mikrofon motor donerken kapali, "dur" listen_s/look_s icinde duyulur
+pulse_min = 0.15
+settle_s = 0.1
+# %40'ta donus hizi (sol 81, sag 73 derece/sn; jiroskopsuz takip tahmini); kamera karesi ~bu kadar eski
+track_rate_dps = 75
+frame_lag_s = 0.05
+# Jiroskopla arama: once son goruldugu yone, sonra bu adimlarla en fazla bir tur
+# ZERO: 35 derecede hedef adimlarin arasinda kaliyordu (YOLO kenarda baska sey saniyor)
+sweep_step_deg = 25
+look_s = 0.8
+moving_dps = 8
+exit_edge = 0.3
+# Goruntu farki (0-255) bunun altindaysa robot donmemistir
+still_diff = 8
+# Kullanici konusurken donus en fazla bu kadar bekler
+hold_max_s = 8
+# Hedef ortalaninca bu sapmaya kadar donulmez; (kisi degilse) bu kadar gorunmezse aranmaz
+lock_tolerance = 0.15
+lock_hold_s = 6
 # Takilma: art arda bu kadar darbede donus beklenenin bu oranindan azsa takip durur
 stall_pulses = 3
 stall_ratio = 0.25
@@ -193,6 +217,29 @@ echo_margin_db = 10
 # Istasyon adi = yayin adresi (ffmpeg'in actigi her sey: m3u8, mp3, aac)
 [radio.stations]
 "Kafa Radyo" = "https://moondigitaledge2.radyotvonline.net/kafaradyo/playlist.m3u8"
+
+[imu]
+# MPU6050 (I2C-1, 0x68): robotun yonu ve aciyla donus (nv/imu.py)
+enabled = true
+bus = 1
+# Modul ters takiliysa -1 (sola donus pozitif olmali)
+sign = 1
+# Olcek hatasi: 360 derecelik donuslerde kamerayla olculdu (2026-10-30), gercek = jiroskop x 1.0125
+scale = 1.0125
+# Aciyla donus: buyuk acida duty_fast, son derecelerde ve duzeltmede duty; hedefe bu kadar yakinsa
+# tamam, en fazla max_corrections kez duzeltilir
+duty_fast = 50
+duty = 40
+slow_below_deg = 25
+tolerance_deg = 2
+max_corrections = 3
+# Durdurma ile tam durus arasi kayma: hiz (derece/sn) x coast_s derece; donuslerde ogrenilir
+coast_s = 0.03  # ZERO: yerde ogrenilen ~0.02-0.03
+settle_s = 0.4
+max_seconds = 3.0
+# Donerken motora guc gidiyor ama stall_s sonra hala bundan yavassa robot takilmistir
+stall_s = 0.5
+stall_dps = 5
 
 [memory]
 # Pi'de yerel SQLite; git disinda
