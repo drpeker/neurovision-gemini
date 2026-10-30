@@ -1,4 +1,4 @@
-"""HC-SR04 ultrasonik mesafe sensoru: robotun onundeki engel (cm). Olcer, karar modelindir.
+"""HC-SR04 ultrasonik mesafe sensoru: robotun onundeki engel (cm).
 
 Arka planda saniyede ~14 olcum. Yanki suresi lgpio alert'leriyle (cekirdek zaman damgasi, ns)
 olculur, Python'un zamanlamasina bagli degil. ECHO 5 V: 1k/2k direnc bolucuyle 3.3 V'a indirilir.

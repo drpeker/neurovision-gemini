@@ -2,7 +2,7 @@
 
 Burada karar verilmez: olaylar modele gider, ne yapacagina o karar verir. Hareket araci calisirken
 olay araca birakilir (model o sirada arac sonucunu bekliyor), yoksa bildirim olarak gider.
-Esikler ivme olcumunden: bosta sarsinti 0.008 g, donerken en fazla 0.30 g (2026-10-30).
+Esikler 6 V olcumunden (2026-10-30): bosta sarsinti 0.008 g, duz giderken 0.87 g, donerken 2.1 g.
 """
 
 import asyncio
@@ -55,7 +55,7 @@ class Senses:
         c, a = self._cfg, (ax, ay, az)
         if self._prev:
             jerk = max(abs(p - v) for p, v in zip(self._prev, a))
-            if jerk >= c["bump_g"]:
+            if jerk >= (c["turn_bump_g"] if self._motors.turning else c["bump_g"]):
                 self._event("carpma", f"Çarpma algılandı ({jerk:.1f} g).", now)
         self._prev = a
         k = min(1.0, 0.005 / TILT_LP_S)

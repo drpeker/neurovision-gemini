@@ -46,6 +46,7 @@ class Motors:
         self._derate_k = 1.0  # surekli surusta her komutta sicaklik olculmez; move() gunceller
         self._task: asyncio.Task | None = None
         self._prev_dir: tuple[int, int] = (0, 0)  # son hareketin yonu (durunca sifirlanmaz)
+        self._dirs: tuple[int, int] = (0, 0)  # istenen yon: kalkista hemen gecerli
         self._stopped_at = 0.0
         self._moving_until = 0.0
         self._quiet_until = 0.0
@@ -84,6 +85,11 @@ class Motors:
     def moving(self) -> bool:
         """Motorlara guc gidiyor (busy'den farkli olarak susma payi yok): takip durunca hemen bakar."""
         return time.monotonic() < self._moving_until
+
+    @property
+    def turning(self) -> bool:
+        """Yerinde donuyor: paletler ters yonde, govde daha cok sarsilir."""
+        return self.moving and self._dirs[0] != self._dirs[1]
 
     @property
     def busy(self) -> bool:
@@ -205,7 +211,8 @@ class Motors:
         duty = max(target * self._derate_k, c["min_speed"])
         await self._cancel()
         self._moving_until = time.monotonic() + seconds + 0.5
-        self._task = asyncio.create_task(self._run(MOVES[direction], seconds, duty, soft), name="motor")
+        self._dirs = MOVES[direction]
+        self._task = asyncio.create_task(self._run(self._dirs, seconds, duty, soft), name="motor")
         log.info("hareket: %s %.1f sn %%%.0f", direction, seconds, duty)
         return {"result": f"{direction} yönünde {seconds:.1f} saniye hareket ediliyor."}
 
@@ -260,6 +267,7 @@ class Motors:
         duty = max(self._cfg["min_speed"], min(duty * self._derate_k, self._cfg["max_speed"]))
         until = time.monotonic() + hold_s
         self._drive_cmd = [dirs, duty, steer, until]
+        self._dirs = dirs
         self._moving_until = until + 0.1
         if not self.driving:
             await self._cancel()

@@ -422,8 +422,7 @@ class Tracker:
                         announced = True
                         await self._say(f"Takip: {name} görüldü, ona dönüyorsun. Bunu tek kısa cümleyle söyle.")
                     elif lost:
-                        await self._say(f"Takip: {name} tekrar bulundu, ona dönüyorsun. "
-                                        "Bunu tek kısa cümleyle söyle.")
+                        log.info("takip: %s tekrar bulundu", target)
                     lost = False
                     if await self._follow(hit, e):
                         locked = False
@@ -501,7 +500,6 @@ class Tracker:
                     return
                 if searched == 0 and announced:
                     lost = True
-                    await self._say(f"Takip: {name} kayboldu, arıyorsun. Bunu tek kısa cümleyle söyle.")
                     log.info("takip: %s kayboldu, %s tarafa aranacak (son yer %s, hiz %+.0f derece/sn)", target,
                              "sol" if last_dir < 0 else "sag", "?" if prev_cx is None else f"{prev_cx:.2f}",
                              self._world_v)
@@ -531,6 +529,10 @@ class Tracker:
                 await asyncio.sleep(c["listen_s"])
             log.info("takip suresi doldu: %s", target)
             await self._say(f"Takip bitti: süre doldu ({name}). Bunu tek kısa cümleyle söyle.")
+        except Exception:
+            log.exception("takip hatasi")
+            await self._motors.stop(quiet=True)
+            await self._say("Takip bir hata yüzünden durdu, şu an takip etmiyorsun. Kullanıcıya kısaca söyle.")
         finally:
             if self.face:
                 self.face.gaze(None)

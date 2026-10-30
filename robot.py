@@ -131,7 +131,7 @@ async def run(cfg: dict) -> None:
     imu = await make_imu(cfg, motors, brain)
     battery = make_battery(cfg, brain, memory)
     senses = make_senses(cfg, imu, motors, battery, brain)
-    sonar = make_sonar(cfg, brain)
+    sonar = make_sonar(cfg, motors, brain)
 
     task = asyncio.create_task(brain.run(), name="brain")
     stop_target = []
@@ -203,8 +203,8 @@ def make_tracker(cfg: dict, camera, motors, brain, face):
     return tracker
 
 
-def make_sonar(cfg: dict, brain):
-    """HC-SR04: model mesafeyi olcer; robot kendiliginden durmaz, karar modelin."""
+def make_sonar(cfg: dict, motors, brain):
+    """HC-SR04: model mesafeyi olcer; ileri giderken stop_cm'de robot kendisi durur."""
     c = cfg.get("sonar", {})
     if not c.get("enabled"):
         return None
@@ -215,7 +215,9 @@ def make_sonar(cfg: dict, brain):
         log.warning("mesafe sensoru acilamadi, olcumsuz devam: %s", e)
         return None
     sonar.start()
-    brain.attach_sonar(sonar, c["near_cm"])
+    if motors:
+        motors.sonar, motors.stop_cm = sonar, c["stop_cm"]
+    brain.attach_sonar(sonar)
     log.info("mesafe sensoru hazir: TRIG GPIO%d, ECHO GPIO%d", c["trig"], c["echo"])
     return sonar
 

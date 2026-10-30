@@ -68,9 +68,11 @@ class LiveBrain:
         if self._tools.tracker:
             self._tools.tracker.turner = turner
 
-    def attach_sonar(self, sonar, near_cm: float) -> None:
-        self._tools.sonar, self._tools.near_cm = sonar, near_cm
+    def attach_sonar(self, sonar) -> None:
+        self._tools.sonar = sonar
         self.body.sonar = sonar
+        if self.motors:
+            self.motors.on_obstacle = self._tools.on_obstacle
 
     def attach_senses(self, senses) -> None:
         self._tools.senses = senses
@@ -121,7 +123,7 @@ class LiveBrain:
         return types.LiveConnectConfig(
             response_modalities=["AUDIO"],
             system_instruction=self._instruction(),
-            speech_config=types.SpeechConfig(voice_config=types.VoiceConfig(
+            speech_config=types.SpeechConfig(language_code="tr-TR", voice_config=types.VoiceConfig(
                 prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=g["voice"]))),
             realtime_input_config=types.RealtimeInputConfig(
                 automatic_activity_detection=types.AutomaticActivityDetection(
@@ -133,7 +135,7 @@ class LiveBrain:
                 sliding_window=types.SlidingWindow(target_tokens=g["context_target_tokens"])),
             # resumption: baglanti kopunca (GoAway, ag) ayni oturuma donulur
             session_resumption=types.SessionResumptionConfig(handle=self._handle),
-            input_audio_transcription=types.AudioTranscriptionConfig(),
+            input_audio_transcription=types.AudioTranscriptionConfig(language_codes=["tr-TR"]),
             output_audio_transcription=types.AudioTranscriptionConfig(),
             media_resolution=types.MediaResolution.MEDIA_RESOLUTION_LOW,
             tools=self._tool_list(),

@@ -24,9 +24,9 @@ etmeye ve şarj istemeye sen karar ver. Kritik seviyede sistem seni kendisi kapa
 Kalan süreyi kalan_mAh ve ortalama_akım_A ile kendin hesapla, hafızadaki eski sürelere güvenme. Kapasiteden
 emin değilsen kullanıcıya sor, battery_capacity ile kaydet.
 Önündeki mesafeyi distance ile santimetre olarak ölçebilirsin; sensör dar bir alana bakar, kişi tam karşında değilse başka şeyi ölçer.
-Bana gel ya da yaklaş denince şu sırayla ilerle, adımları sen yönet: 1) look ile bak, görülenler listesinde person ara. Kişi yoksa 45 derece dön, yeniden bak; en fazla bir tur. 2) Kişinin x değeriyle turn_to çağır. 3) Yeniden look; kişi ortada değilse (x 420-580 dışı) turn_to ile düzelt. 4) distance ile ölç; istenen yakınlığa (söylenmediyse 40 cm) kalan yolu hıza bölüp tek move ile git. Hızın normalde saniyede 8 cm, yavaşta 6.5 cm, hızlıda 13 cm. 5) Yeniden look ve distance ile kontrol et, gerekiyorsa düzeltip devam et. Sensör dar bir alana bakar, kişi tam karşında değilse başka şeyi ölçer; ölçüm görüntüyle uyuşmuyorsa önce dön.
-Kameran yerden alçakta, bacakların kadrajı doldurması yakınlık değildir: uzaklığa sensörden bak, ölçüm izin veriyorsa çekinmeden yaklaş. Araç sonucunda ya da sistem olayı olarak çarpma,
-eğim, taşınma, zorlanma, yakın engel gelebilir; motor çalışıyorsa stop kullanabilirsin, ne yapacağına sen karar ver.
+Bana gel ya da yaklaş denince şu sırayla ilerle, adımların hepsini yap: 1) look ile bak, görülenler listesinde person ara. Kişi yoksa 45 derece dön, yeniden bak; en fazla bir tur. 2) Kişinin x değeriyle turn_to çağır. 3) Yeniden look; kişi ortada değilse (x 420-580 dışı) turn_to ile düzelt. 4) distance ile ölç; istenen yakınlığa (söylenmediyse 40 cm) kalan yolu hıza bölüp tek move ile git. Hızın normalde saniyede yaklaşık 24 cm, yavaşta 18 cm, hızlıda 30 cm; ilk ve son 0.3 saniyede daha az. 5) Durunca mutlaka yeniden look ve distance ile kontrol et, kalan varsa düzeltip devam et, varınca söyle. Sensör dar bir alana bakar, kişi tam karşında değilse başka şeyi ölçer; ölçüm görüntüyle uyuşmuyorsa önce dön.
+Kameran yerden alçakta, bacakların kadrajı doldurması yakınlık değildir: uzaklığa sensörden bak, çekinmeden yaklaş. Robot ileri giderken çok yakın engelde, çarpmada, eğilince ya da kaldırılınca kendisi durur; araç sonucunda ya da sistem olayı olarak bildirilir. Hareket sırasında kullanıcı konuşursa da durursun; sözünü dinle.
+Yalnızca araç sonuçlarında ve görüntüde gördüğünü söyle. Yapmadığın hareketi, görmediğin şeyi ya da sebebini bilmediğin durumu uydurma; bilmiyorsan bilmiyorum de.
 Kendi bedenini hissedebilirsin: ısın, gücün, işlemcin, belleğin, pinlerin, bağlı sensörlerin,
 ortam ışığı ve ses düzeyi için body_status kullan; ölçmeden tahmin yürütme.
 Ekranında gözlerin var; söylediğine uygun bir duygu olduğunda express ile yüz ifadeni göster.
@@ -130,17 +130,17 @@ pwm_hz = 200
 # ramp_start yerde kalkis esiginin hemen alti. Ani akim 2S bataryanin korumasini
 # attirabiliyor; kalkis yumusak kalsin. (L298N'de 35 idi; MX1508 ~2 V daha fazla verir)
 ramp_start = 22
-ramp_up_ms = 500
-ramp_down_ms = 300
+ramp_up_ms = 300
+ramp_down_ms = 200
 # Takip darbeleri (kisa, rampasiz yerine kisa rampa): 40 ms'de art arda %40 darbeler
 # bataryayi tuketip korumayi attirabildi; 90 ms ani akimi yumusatir, donusu az etkiler
 pulse_ramp_ms = 90
 # Hiz (%), duzey %100'de: duz / donus / tavan / taban. L298N'deki begenilen hizlarin
 # (42/50) MX1508 karsiligi: L298N ~2 V yiyordu, ayni motor gerilimi icin daha az PWM gerekir.
 # Tavan: 2S (8.4 V) x %70 ~ 6 V motor siniri. Taban: yerde kalkis esigi (tahmin, testle ayarla)
-drive_speed = 32
+drive_speed = 42  # ZERO 6 V regule: 2026-10-30
 turn_speed = 38
-max_speed = 70
+max_speed = 90  # 6 V regule hat: PWM motoru 6 V ustune cikaramaz
 min_speed = 22
 # Sesli donusun en dusuk gucu (%): 30 ile 0.3-1 sn donus zayifti (yerde %28 ~5 derece/0.25 sn).
 # Takip ve arama bunu kullanmaz. Sesli donus ayrica kisa rampa (pulse_ramp_ms) kullanir.
@@ -158,7 +158,7 @@ derate = 0.6
 steer_per_deg = 0.04
 steer_max = 0.3
 # Motor donerken konusma bu seviyeyi (dBFS) ve motor gurultusunun 6 dB ustunu gecince robot durur
-barge_db = -19
+barge_db = -15
 # en: yalnizca L298N'de kullanilir; MX1508'de GPIO12/13 bos
 left = { in1 = 23, in2 = 24, en = 12, invert = false }
 right = { in1 = 27, in2 = 22, en = 13, invert = true }
@@ -208,6 +208,23 @@ hold_max_s = 8
 # Hedef ortalaninca bu sapmaya kadar donulmez; (kisi degilse) bu kadar gorunmezse aranmaz
 lock_tolerance = 0.15
 lock_hold_s = 6
+# Aramada onde bu kadar yakin engel varsa once geri gidilir
+search_obstacle_cm = 35
+back_off_cm = 10
+back_off_max_s = 1.2
+# Kisi takibi: sonarla follow_cm'de bekler, uzaksa ileri (6 V), yakinsa geri, sapma buyukse durup doner
+follow_cm = 60
+follow_band_cm = 8
+follow_duty = 30
+follow_duty_per_10cm = 1.0
+follow_duty_max = 42
+follow_back_duty = 30
+follow_far_cm = 200
+follow_steer = 0.8
+follow_steer_max = 0.35
+follow_turn_e = 0.3
+follow_box_h = 0.95
+follow_hold_s = 0.6
 # Takilma: art arda bu kadar darbede donus beklenenin bu oranindan azsa takip durur
 stall_pulses = 3
 stall_ratio = 0.25
@@ -239,13 +256,13 @@ sign = 1
 scale = 1.0125
 # Aciyla donus: buyuk acida duty_fast, son derecelerde ve duzeltmede duty; hedefe bu kadar yakinsa
 # tamam, en fazla max_corrections kez duzeltilir
-duty_fast = 50
-duty = 40
-slow_below_deg = 25
+duty_fast = 70
+duty = 50
+slow_below_deg = 30
 tolerance_deg = 2
 max_corrections = 3
 # Durdurma ile tam durus arasi kayma: hiz (derece/sn) x coast_s derece; donuslerde ogrenilir
-coast_s = 0.03  # ZERO: yerde ogrenilen ~0.02-0.03
+coast_s = 0.035  # ZERO 6 V: yerde ogrenilen ~0.03-0.04
 settle_s = 0.4
 max_seconds = 3.0
 # Donerken motora guc gidiyor ama stall_s sonra hala bundan yavassa robot takilmistir
@@ -284,8 +301,9 @@ curve = [[3.27, 0], [3.61, 5], [3.69, 10], [3.71, 15], [3.73, 20], [3.75, 25], [
 # Beden algisi (nv/senses.py): olaylar modele gider, karari o verir
 # Modul duzken olculen ivme (g): egim buna gore
 gravity = [0.06, -0.01, 0.91]
-# Tek ornekte ivme sicramasi (g): bosta 0.008, yerde sururken en fazla 0.81 olculdu
-bump_g = 1.2
+# Tek ornekte ivme sicramasi (g): 6 V'ta duz giderken 0.87, donerken 2.1 olculdu
+bump_g = 1.5
+turn_bump_g = 3.0
 tilt_deg = 20
 # Motor dururken bu donus (derece/sn) ya da ivme sapmasi (g) handle_s surerse tasiniyor sayilir;
 # still_s durgunluktan sonra biter
@@ -293,21 +311,21 @@ handle_dps = 25
 handle_g = 0.12
 handle_s = 0.15
 still_s = 3
-# Bu akim (A) 0.6 sn surerse zorlanma: yerde ileri 0.30, donus 0.52 A; sikisma olculmedi
+# Bu akim (A) 0.6 sn surerse zorlanma: 6 V'ta yerde en fazla 0.71 A olculdu; sikisma olculmedi
 stall_a = 1.0
 # Ayni olay en fazla bu aralikla bildirilir
 repeat_s = 8
 
 [sonar]
-# HC-SR04 (nv/sonar.py): TRIG GPIO4, ECHO GPIO17. Olcer, durdurmaz; karar modelin
+# HC-SR04 (nv/sonar.py): TRIG GPIO4, ECHO GPIO17
 enabled = true
 trig = 4
 echo = 17
 max_cm = 400
 # Olcumler arasi bekleme (sn): onceki darbenin yankilari sonsun
 interval_s = 0.04
-# Ileri giderken engel bundan yakina gelirse move hemen doner, model karar verir
-near_cm = 35
+# Ileri giderken engel bundan yakinsa robot aninda durur (Motors.Obstacle)
+stop_cm = 25
 
 [memory]
 # Pi'de yerel SQLite; git disinda

@@ -14,7 +14,6 @@ from .body import SECTIONS, Body
 from .camera import Camera
 from .display import EMOTIONS
 from . import web
-from .lang import looks_foreign
 from .memory import CATEGORIES, Memory
 from .vision import COCO80, COLORED, COLORS
 
@@ -87,7 +86,7 @@ DECLARATIONS = [
                     "'çok yavaş' speed=çok yavaş demektir; ikisi birlikte de olabilir. Bir istek için tek "
                     "move çağır: araç hareket bitince döner, bitene kadar kullanıcıyı duyamazsın. "
                     "Hedefe varmak için tekrar tekrar çağırma: mesafeyi ölç, süreyi hesapla, tek hareketle "
-                    "git; kullanıcı konuşmadan en fazla 15 saniye hareket edebilirsin.",
+                    "git. Robot engelde ve çarpmada kendisi durur, sonuçta bildirilir.",
         parameters_json_schema=_params({
             "direction": {"type": "string", "enum": ["ileri", "geri", "sol", "sag"],
                           "description": "sol/sag: yerinde dönüş"},
@@ -138,8 +137,6 @@ DECLARATIONS = [
 
 VOLUME_STEP = 15
 # Yanlis duyulan (yabanci dil/gurultu) bir sozle yapilmamasi gereken isler
-GUARDED = {"move", "remember", "forget", "volume", "shutdown", "motor_speed", "track", "turn_to",
-           "battery_capacity"}
 
 
 class Tools:
@@ -159,7 +156,7 @@ class Tools:
         self.turn_only = False  # LiveBrain: ileri/geri kapalı (masada test)
         self.senses = None  # LiveBrain.attach_senses
         self.sonar = None  # LiveBrain.attach_sonar
-        self.near_cm = 0.0  # ileri giderken engel bundan yakinsa arac hemen doner
+        self._blocked_cm: float | None = None  # Motors.on_obstacle: ileride engel, robot durdu
         self._interrupted = False  # kullanıcı hareket sırasında konuştu
         self._turn_task: asyncio.Task | None = None
         self._moves: collections.deque = collections.deque()  # (bitiş zamanı, süre)
@@ -260,12 +257,6 @@ class Tools:
     async def handle(self, call: types.FunctionCall) -> types.FunctionResponse:
         args = call.args or {}
         log.info("arac cagrisi: %s %s", call.name, args)
-        heard = self.heard()
-        if call.name in GUARDED and looks_foreign(heard):
-            log.info("arac reddedildi, soz Turkce degil: %r", heard)
-            return types.FunctionResponse(id=call.id, name=call.name, response={
-                "error": "Kullanıcının son sözü anlaşılamadı (yabancı dil ya da gürültü), işlem "
-                         "yapılmadı. Kısaca anlayamadığını söyle ve tekrar etmesini iste."})
         try:
             if call.name == "look":
                 return await self._look(call)
@@ -369,23 +360,21 @@ class Tools:
                 return result
             peak = 0.0
             battery = self._body.battery
-            sonar = self.sonar if direction == "ileri" else None
-            ahead = sonar.distance if sonar else None
-            warn = sonar and (ahead is None or ahead >= self.near_cm)  # zaten yakınsa model biliyor
+            self._blocked_cm = None
             while self.motors.moving:
-                ahead = sonar.distance if sonar else None
-                if warn and ahead is not None and ahead < self.near_cm:
-                    return {"result": "İleri giderken önüne bir şey geldi; motor hâlâ çalışıyor, durmak "
-                                      "istiyorsan hemen stop çağır.", "olay": f"Önünde {ahead:.0f} cm'de engel var."}
                 peak = max(peak, battery.amps) if battery else 0.0
                 event = self.senses.take() if self.senses else None
-                if event:  # karar modelin: motor durmadı, durdurmak için stop
-                    return {"result": f"{direction} hareketi sürerken olay oldu; motor hâlâ çalışıyor, "
-                                      "durmak istiyorsan hemen stop çağır.", "olay": event}
+                if event:  # robot önce durur, sonra model karar verir
+                    await self.motors.stop(quiet=True)
+                    log.info("hareket olay yuzunden kesildi: %s", event)
+                    return {"result": f"{direction} hareketi olay yüzünden durdu.", "olay": event}
                 await asyncio.sleep(0.02)
             log.info("hareket bitti: %s %.1f sn, tepe akim %.2f A", direction, seconds, peak)
             if self._interrupted:
                 return {"result": INTERRUPTED}
+            if self._blocked_cm is not None:
+                return {"result": "Önüne engel çıktığı için kendin durdun.",
+                        "öndeki_mesafe_cm": round(self._blocked_cm)}
             result = {"result": f"{direction} yönünde {seconds:.1f} saniye gidildi. Hareket bitti."}
             if self.sonar and self.sonar.distance is not None:
                 result["öndeki_mesafe_cm"] = round(self.sonar.distance)
@@ -460,6 +449,10 @@ class Tools:
         found = await self.tracker.detect(jpeg)
         return {"görülenler": [{"ad": d.name, "x": round(d.cx * 1000), "güven": round(d.conf, 2)} for d in found[:8]],
                 "not": "x: 0 en sol, 500 orta, 1000 en sağ."}
+
+    def on_obstacle(self, cm: float | None) -> None:
+        """Motors: ileri giderken engelde durdu (Obstacle)."""
+        self._blocked_cm = cm if cm is not None else 0.0
 
     def _distance(self) -> dict:
         if not self.sonar:
