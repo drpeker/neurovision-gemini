@@ -87,9 +87,9 @@ class Motors:
         return time.monotonic() < self._moving_until
 
     @property
-    def turning(self) -> bool:
-        """Yerinde donuyor: paletler ters yonde, govde daha cok sarsilir."""
-        return self.moving and self._dirs[0] != self._dirs[1]
+    def jolting(self) -> bool:
+        """Donus (paletler ters, durusu dahil) ya da rampasiz surus: govde daha cok sarsilir."""
+        return self.driving or (self.busy and self._dirs[0] != self._dirs[1])
 
     @property
     def busy(self) -> bool:

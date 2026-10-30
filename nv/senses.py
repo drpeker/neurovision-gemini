@@ -55,7 +55,7 @@ class Senses:
         c, a = self._cfg, (ax, ay, az)
         if self._prev:
             jerk = max(abs(p - v) for p, v in zip(self._prev, a))
-            if jerk >= (c["turn_bump_g"] if self._motors.turning else c["bump_g"]):
+            if jerk >= (c["turn_bump_g"] if self._motors.jolting else c["bump_g"]):
                 self._event("carpma", f"Çarpma algılandı ({jerk:.1f} g).", now)
         self._prev = a
         k = min(1.0, 0.005 / TILT_LP_S)
