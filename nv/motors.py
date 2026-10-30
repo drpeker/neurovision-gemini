@@ -55,6 +55,7 @@ class Motors:
         self.stop_cm = 25.0
         self.on_obstacle = None  # robot.py: on_obstacle(cm), engel yuzunden durunca (soylemek icin)
         self._drive_cmd: list | None = None  # surekli surus: [yonler, guc, yon duzeltmesi, bitis]
+        self._closed = False  # close sonrasi calisan gorev pinlere yazmasin
         log.info("motorlar hazir: %s, hiz duzeyi %%%d (sol A, sag B%s)", cfg["driver"],
                  self.speed_level, " ters" if cfg["right"]["invert"] else "")
 
@@ -130,6 +131,8 @@ class Motors:
         self._lg.tx_pwm(self._h, side["en"], self._cfg["pwm_hz"], min(100.0, duty))
 
     def _set(self, left: int, right: int, duty: float) -> None:
+        if self._closed:
+            return
         # trim: motorlar ayni gucte ayni hizda donmuyor; yavas tarafin gucu bu oranla carpilir
         for name, direction, k in (("sol", left, 1 + self._steer), ("sag", right, 1 - self._steer)):
             side = self._sides[name]
@@ -333,6 +336,10 @@ class Motors:
         log.warning("motor sinyal kontrolu: PWM %s (40 olcumde %d yuksek)", "VAR" if ok else "YOK", highs)
         return {"pwm_sinyali": "var" if ok else "yok"}
 
+    def listen_now(self) -> None:
+        """Susma payini birak: kullanici konusuyor, cumlenin kalani modele gitsin."""
+        self._quiet_until = 0.0
+
     async def stop(self, quiet: bool = False) -> dict:
         """quiet: takibin erken durdurmasi (hedef ortaya geldi), her seferinde loglanmaz."""
         await self._cancel()
@@ -342,5 +349,8 @@ class Motors:
         return {"result": "Durdum."}
 
     def close(self) -> None:
+        if self._task and not self._task.done():
+            self._task.cancel()
         self.halt()
+        self._closed = True
         self._lg.gpiochip_close(self._h)

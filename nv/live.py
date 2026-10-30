@@ -15,7 +15,7 @@ from .debug import DebugRecorder
 from .memory import Memory
 from .summarizer import consolidate
 from .tools import Tools
-from .vad import SpeechGate
+from .vad import MotionBarge, SpeechGate
 
 log = logging.getLogger(__name__)
 
@@ -38,6 +38,8 @@ class LiveBrain:
         self.body.speaker = speaker
         self._tools = Tools(camera, memory, self.body, speaker)
         self._tools.heard = lambda: "".join(self._heard)
+        self._tools.turn_only = cfg["motors"].get("turn_only", False)
+        self._barge = MotionBarge(cfg["motors"].get("barge_db", -19.0))
         self.face = None  # attach_face ile (nv.display.Face)
         self.motors = None  # attach_motors ile (nv.motors.Motors)
         self._frame_on_speech = cfg["camera"]["enabled"] and cfg["camera"]["frame_on_speech"]
@@ -78,6 +80,17 @@ class LiveBrain:
             log.info("bildirim: %s", text)
             await self._live.send_realtime_input(text=f"[Sistem olayı] {text}")
 
+    async def power_down(self) -> None:
+        """Batarya kritik: her hareketi kes, veda ettir; kapatmayi cagiran yapar."""
+        if self.motors:
+            await self._tools.interrupt()
+        self._tools.disable_motion()
+        await self.notify("Batarya kritik seviyede, kapanıyorsun. Tek kısa cümleyle veda et.")
+        await asyncio.sleep(3)  # bagli degilse notify bos gecer, yine kapanilir
+        deadline = time.monotonic() + 8
+        while self._speaker.busy and time.monotonic() < deadline:
+            await asyncio.sleep(0.2)
+
     def attach_shutdown(self, fn) -> None:
         self._tools.on_shutdown = fn
 
@@ -89,6 +102,10 @@ class LiveBrain:
         m = self._cfg["memory"]
         text = self._cfg["gemini"]["system_instruction"].strip()
         context = self._memory.context(m["facts_in_prompt"], m["episodes_in_prompt"])
+        battery = self.body.battery
+        if battery and battery.ok:
+            text += (f"\n\nOturum açılırken bataryan: %{battery.percent}, {battery.volts:.1f} V; "
+                     "güncel değer için body_status batarya.")
         return f"{text}\n\n{context}" if context else text
 
     def _config(self) -> types.LiveConnectConfig:
@@ -215,6 +232,13 @@ class LiveBrain:
         self.gate.reset()
         while True:
             frame = await self._mic.frames.get()
+            if self.motors and self.motors.moving and not self._speaker.busy:
+                if self._barge.feed(frame):  # konusuldu: modeli beklemeden dur
+                    log.info("hareket sirasinda konusuldu: duruldu")
+                    self._barge.reset()
+                    await self._tools.interrupt()
+            else:
+                self._barge.reset()
             if self._speaker.busy or (self.motors and self.motors.busy):
                 # Yari cift yonlu: robot konusurken ya da motorlar donerken mikrofon susar;
                 # kendi sesi / motor sesi modele gitmez, token harcanmaz
@@ -231,6 +255,7 @@ class LiveBrain:
                 self._speaker.duck(3)  # kullanici konusurken radyo kisik
             if event == "start":
                 log.info("konusma onaylandi, modele gonderiliyor")
+                self._tools.new_speech()
                 if self._rec:
                     self._rec.start([])
                 jpeg = self._camera.frame() if self._frame_on_speech and self._camera else None

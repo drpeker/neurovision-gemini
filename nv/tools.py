@@ -4,6 +4,7 @@ Aciklamalar ve donen sonuclar modele gider: duzgun Turkce yazilir.
 """
 
 import asyncio
+import collections
 import logging
 import time
 
@@ -21,6 +22,15 @@ log = logging.getLogger(__name__)
 
 
 TURN_DPS = 60.0  # süreyle verilen dönüş <-> açı çevirisi (0.3 sn ~ 20 derece)
+# Hareket sınırı: mikrofon motor dönerken kapalı, "dur" duyulmaz. Model move'u döngüye sokunca robot
+# 81 sn durmadı (2026-10-30): kullanıcı konuşmadan MOVE_BUDGET_S, konuşsa da (gürültü de konuşma
+# sayılabilir) MOVE_WINDOW_S içinde MOVE_WINDOW_MAX_S saniyeden fazla hareket yok
+MOVE_BUDGET_S = 6.0
+MOVE_WINDOW_S = 60.0
+MOVE_WINDOW_MAX_S = 20.0
+INTERRUPTED = "Kullanıcı konuştuğu için hareketi yarıda kesip durdun. Söylediğini dinle, kendiliğinden devam etme."
+MOVE_REFUSED = ("Hareket sınırına ulaştın, durdun ve hareket yapılmadı. Yeniden move çağırma; "
+                "kullanıcıya kısaca söyle ve yeni komutunu bekle.")
 
 
 def _params(props: dict, required: list[str]) -> dict:
@@ -74,14 +84,15 @@ DECLARATIONS = [
                     "istediğinde kullan. Dönüşte (sol/sag) her zaman degrees ver: söylenen açı, 'biraz' 20, "
                     "'çeyrek' 90, 'yarım tur' 180, 'tam tur' 360; dönüş bitince gerçek açı döner. İleri/"
                     "geride seconds ver: 'hafifçe/biraz' kısa süre (0.3 sn). 'Yavaşça' speed=yavaş, "
-                    "'çok yavaş' speed=çok yavaş demektir; ikisi birlikte de olabilir. İleri/geri en "
-                    "fazla 3 saniye sürer; daha uzun yol için adım adım ilerle ve gerekirse look ile "
-                    "önüne bak. Hareket ederken mikrofonun kapalıdır.",
+                    "'çok yavaş' speed=çok yavaş demektir; ikisi birlikte de olabilir. Bir istek için tek "
+                    "move çağır: araç hareket bitince döner, bitene kadar kullanıcıyı duyamazsın. "
+                    "Hedefe varmak için tekrar tekrar çağırma; kullanıcı konuşmadan en fazla 6 saniye "
+                    "hareket edebilirsin, sonrası reddedilir ve yeni komut beklersin.",
         parameters_json_schema=_params({
             "direction": {"type": "string", "enum": ["ileri", "geri", "sol", "sag"],
                           "description": "sol/sag: yerinde dönüş"},
             "degrees": {"type": "number", "description": "sol/sag için dönüş açısı, 1 ile 720 arası derece"},
-            "seconds": {"type": "number", "description": "ileri/geri için 0.25 ile 3 arası saniye; hafifçe 0.3, normal 1"},
+            "seconds": {"type": "number", "description": "ileri/geri için 0.25 ile 6 arası saniye; hafifçe 0.3, normal 1"},
             "speed": {"type": "string", "enum": ["çok yavaş", "yavaş", "normal", "hızlı"]},
         }, ["direction"]),
     ),
@@ -127,7 +138,8 @@ DECLARATIONS = [
 
 VOLUME_STEP = 15
 # Yanlis duyulan (yabanci dil/gurultu) bir sozle yapilmamasi gereken isler
-GUARDED = {"move", "remember", "forget", "volume", "shutdown", "motor_speed", "track", "turn_to"}
+GUARDED = {"move", "remember", "forget", "volume", "shutdown", "motor_speed", "track", "turn_to",
+           "battery_capacity"}
 
 
 class Tools:
@@ -143,6 +155,11 @@ class Tools:
         self.on_shutdown = None  # robot.py: on_shutdown("robot" | "sistem")
         self.tracker = None  # robot.py: nv.tracker.Tracker
         self.turner = None  # LiveBrain.attach_turner (nv.imu.AngleTurner, MPU6050)
+        self._spent = 0.0  # son konuşmadan beri hareket süresi
+        self.turn_only = False  # LiveBrain: ileri/geri kapalı (masada test)
+        self._interrupted = False  # kullanıcı hareket sırasında konuştu
+        self._turn_task: asyncio.Task | None = None
+        self._moves: collections.deque = collections.deque()  # (bitiş zamanı, süre)
 
     def declarations(self) -> list[types.FunctionDeclaration]:
         """Sabit araclar + istasyon listesine gore radyo ve ses duzeyi."""
@@ -156,6 +173,17 @@ class Tools:
                 "level": {"type": "integer", "description": "ayarla için 0-100 arası yüzde"},
             }, ["action"]),
         ))
+        if self._body.battery:
+            decls.append(types.FunctionDeclaration(
+                name="battery_capacity",
+                description="Bataryanın kapasitesini öğren ya da kaydet. Kapasiteden emin değilsen "
+                            "kullanıcıya sor, söyleyince ayarla ile kaydet; oran ve kalan mAh buna göre "
+                            "hesaplanır.",
+                parameters_json_schema=_params({
+                    "action": {"type": "string", "enum": ["sor", "ayarla"]},
+                    "mah": {"type": "integer", "description": "ayarla için kapasite (mAh)"},
+                }, ["action"]),
+            ))
         if self.motors:
             decls.append(types.FunctionDeclaration(
                 name="motor_speed",
@@ -302,27 +330,105 @@ class Tools:
     async def _move(self, direction: str, seconds: float | None = None, speed: str = "normal",
                     degrees: float | None = None) -> dict:
         turning = direction in ("sol", "sag")
-        if turning and self.turner:
-            # Jiroskopla; biten dönüş sonucu modele döner, sıradaki hareket bunu kesmez
-            degrees = min(720.0, abs(degrees or (seconds or 1.0) * TURN_DPS))
-            left = await self.turner.turn(degrees if direction == "sol" else -degrees)
-            if self.turner.stalled:
-                return {"error": "Motorlara güç gitti ama robot dönmedi (sıkışma ya da düşük batarya)."}
-            return {"result": f"{direction} yönünde {degrees - abs(left):.0f} derece dönüldü."}
-        if turning and degrees and seconds is None:
-            seconds = abs(degrees) / TURN_DPS  # jiroskop yok: açı süreye çevrilir
-        return await self.motors.move(direction, seconds or 1.0, speed)
+        if self.turn_only and not turning:
+            log.warning("hareket reddedildi: yalniz donus acik (%s)", direction)
+            return {"error": "Şu an yalnızca sağa sola dönebilirsin; ileri geri gitmek kapalı. Kullanıcıya söyle."}
+        budget = self._budget()
+        if budget < 0.25:
+            log.warning("hareket reddedildi: sinir doldu (%s)", direction)
+            return {"error": MOVE_REFUSED}
+        self._interrupted = False
+        started = time.monotonic()
+        try:
+            if turning and self.turner:
+                # Jiroskopla; biten dönüş sonucu modele döner, sıradaki hareket bunu kesmez
+                degrees = min(720.0, abs(degrees or (seconds or 1.0) * TURN_DPS))
+                left = await self._turn(degrees if direction == "sol" else -degrees)
+                if left is None:
+                    return {"result": INTERRUPTED}
+                if self.turner.stalled:
+                    return {"error": "Motorlara güç gitti ama robot dönmedi (sıkışma ya da düşük batarya)."}
+                return {"result": f"{direction} yönünde {degrees - abs(left):.0f} derece dönüldü. Hareket bitti."}
+            if turning and degrees and seconds is None:
+                seconds = abs(degrees) / TURN_DPS  # jiroskop yok: açı süreye çevrilir
+            seconds = min(seconds or 1.0, budget)
+            result = await self.motors.move(direction, seconds, speed)
+            if "error" in result:
+                return result
+            while self.motors.moving:
+                await asyncio.sleep(0.02)
+            if self._interrupted:
+                return {"result": INTERRUPTED}
+            return {"result": f"{direction} yönünde {seconds:.1f} saniye gidildi. Hareket bitti."}
+        except asyncio.CancelledError:
+            await self.motors.stop(quiet=True)
+            raise
+        finally:
+            self._spend(time.monotonic() - started)
+
+    async def _turn(self, degrees: float) -> float | None:
+        """Jiroskopla dön; kalan hata, kullanıcı araya girdiyse None."""
+        self._turn_task = asyncio.create_task(self.turner.turn(degrees), name="turn")
+        try:
+            return await self._turn_task
+        except asyncio.CancelledError:
+            if self._interrupted:
+                return None
+            raise
+
+    def disable_motion(self) -> None:
+        """Batarya kritik: bundan sonra hareket yok."""
+        self.motors = self.turner = self.tracker = None
+
+    async def interrupt(self) -> None:
+        """Kullanıcı hareket sırasında konuştu: her şeyi durdur, sözünü dinle."""
+        self._interrupted = True
+        if self.tracker and self.tracker.active:
+            await self.tracker.stop()
+        if self._turn_task and not self._turn_task.done():
+            self._turn_task.cancel()
+        await self.motors.stop(quiet=True)
+        self.motors.listen_now()
+
+    def new_speech(self) -> None:
+        """Kullanıcı konuştu: hareket bütçesi yenilenir."""
+        self._spent = 0.0
+
+    def _budget(self) -> float:
+        now = time.monotonic()
+        while self._moves and now - self._moves[0][0] > MOVE_WINDOW_S:
+            self._moves.popleft()
+        return min(MOVE_BUDGET_S - self._spent, MOVE_WINDOW_MAX_S - sum(s for _, s in self._moves))
+
+    def _spend(self, seconds: float) -> None:
+        self._spent += seconds
+        self._moves.append((time.monotonic(), seconds))
 
     async def _turn_to(self, x: int) -> dict:
         await self.tracker.stop()
+        if self._budget() < 0.25:
+            log.warning("donus reddedildi: sinir doldu")
+            return {"error": MOVE_REFUSED}
         e = max(0, min(1000, int(x))) / 1000 - 0.5
         if abs(e) <= self.tracker._cfg["center_tolerance"]:
             return {"result": "Nesne zaten tam önünde."}
+        started = time.monotonic()
         if self.turner:
-            await self.turner.turn(-e * self.tracker._cfg["hfov_deg"])
+            self._interrupted = False
+            await self._turn(-e * self.tracker._cfg["hfov_deg"])
         else:
             await self.tracker.turn_toward(e)
+        self._spend(time.monotonic() - started)
         return {"result": f"{'Sola' if e < 0 else 'Sağa'} döndüm; emin olmak için tekrar look ile bakabilirsin."}
+
+    def _battery_capacity(self, action: str, mah: int | None = None) -> dict:
+        battery = self._body.battery
+        if not battery:
+            return {"error": "Batarya ölçümü yok."}
+        if action == "ayarla" and mah and mah > 0:
+            battery.capacity_mah = int(mah)
+            self._memory.set("battery_capacity_mah", str(battery.capacity_mah))
+        return {"kapasite_mAh": battery.capacity_mah}
 
     def _motor_speed(self, action: str, level: int | None = None) -> dict:
         if not self.motors:

@@ -32,6 +32,31 @@ def frame_db(frame: bytes) -> float:
     return 20 * math.log10(max(rms, 1.0) / 32768)
 
 
+class MotionBarge:
+    """Motor donerken konusma: mikrofon motor gurultusuyle dolu, SpeechGate calismaz.
+
+    Son 1 sn'nin ortanca seviyesinin (motor gurultusu) rise_db ustunde, en az floor_db olan
+    kareler sayilir; son 400 ms'de need kare olursa True. Motor -27 dBFS, tepe -22; normal konusma
+    tepeleri -14..-17 olculdu. Yanlis tetikleme yalniz hareketi keser.
+    """
+
+    def __init__(self, floor_db: float, rise_db: float = 6.0, need: int = 3):
+        self._floor, self._rise, self._need = floor_db, rise_db, need
+        self._levels: deque = deque(maxlen=50)
+        self._hits: deque = deque(maxlen=20)
+
+    def reset(self) -> None:
+        self._levels.clear()
+        self._hits.clear()
+
+    def feed(self, frame: bytes) -> bool:
+        db = frame_db(frame)
+        if len(self._levels) >= 15:  # kalkis darbesi taban sayilmasin diye once 300 ms dinle
+            self._hits.append(db >= max(self._floor, sorted(self._levels)[len(self._levels) // 2] + self._rise))
+        self._levels.append(db)
+        return sum(self._hits) >= self._need
+
+
 class SpeechGate:
     """feed(kare) -> (gonderilecek_kareler, olay); olay "start", "end" ya da None."""
 

@@ -24,6 +24,10 @@ def rgb(r: int, g: int, b: int) -> bytes:
 
 
 BLACK = rgb(0, 0, 0)
+BATTERY_W, BATTERY_H = 84, 21
+BATTERY_RIGHT = 9  # ekranin sagindan bosluk: panel kosesi yuvarlak
+WIFI_W, WIFI_LEFT = 32, 9
+BATTERY_EYES = ["eye", "warn", "hot", "bad"]  # batarya seviyesine gore goz rengi
 COLORS = {
     "eye": (40, 210, 255), "listen": (60, 255, 210), "offline": (90, 90, 100),
     "hot": (255, 150, 30), "flash": (255, 255, 255), "accent": (40, 210, 255),
@@ -168,6 +172,53 @@ class Canvas:
                 self.span(y, a, b, color)
 
 
+def wifi_dbm() -> int | None:
+    """wlan0 sinyal seviyesi; bagli degilse None."""
+    try:
+        for line in Path("/proc/net/wireless").read_text().splitlines()[2:]:
+            parts = line.split()
+            if parts and parts[0].rstrip(":") == "wlan0":
+                return int(float(parts[3]))
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
+
+
+def wifi_icon(bars: int | None, color: tuple[int, int, int]) -> bytes:
+    """Sol ust: uc yay ve nokta; bars 0-3 dolu yay, None: Wi-Fi yok (carpi). WIFI_W x BATTERY_H RGB565."""
+    from PIL import Image, ImageDraw
+    img = Image.new("RGB", (WIFI_W, BATTERY_H))
+    d = ImageDraw.Draw(img)
+    cx, cy = WIFI_W // 2, BATTERY_H - 4
+    for i, r in enumerate((6, 11, 16)):
+        lit = bars is not None and i < bars
+        d.arc((cx - r, cy - r, cx + r, cy + r), 225, 315, fill=color if lit else (70, 70, 70), width=2)
+    d.ellipse((cx - 2, cy - 2, cx + 2, cy + 2), fill=color if bars is not None else (70, 70, 70))
+    if bars is None:
+        d.line((cx - 8, 3, cx + 8, 19), fill=color, width=2)
+        d.line((cx + 8, 3, cx - 8, 19), fill=color, width=2)
+    return to_rgb565(img)
+
+
+def battery_icon(percent: int | None, color: tuple[int, int, int]) -> bytes:
+    """Sag ust: oran yazisi ve dolulugu gosteren pil, BATTERY_W x BATTERY_H RGB565."""
+    from PIL import Image, ImageDraw, ImageFont
+    try:
+        font = ImageFont.truetype(FONT, 14)
+    except OSError:
+        font = ImageFont.load_default(14)
+    img = Image.new("RGB", (BATTERY_W, BATTERY_H))
+    d = ImageDraw.Draw(img)
+    x0, y0, x1, y1 = BATTERY_W - 33, 4, BATTERY_W - 4, 16
+    d.text((x0 - 4, BATTERY_H // 2), "?" if percent is None else f"%{percent}",
+           font=font, fill=color, anchor="rm")
+    d.rectangle((x0, y0, x1, y1), outline=(200, 200, 200))
+    d.rectangle((x1 + 1, y0 + 3, x1 + 3, y1 - 3), fill=(200, 200, 200))
+    if percent:
+        d.rectangle((x0 + 2, y0 + 2, x0 + 2 + max(1, (x1 - x0 - 4) * percent // 100), y1 - 2), fill=color)
+    return to_rgb565(img)
+
+
 class Captions:
     """Alt seritte son konusma: kullanici gri, robot beyaz. Sigmazsa son satirlar gorunur."""
 
@@ -235,6 +286,7 @@ class Face:
         self._last_active = time.monotonic()
         self._bright = None
         self._temp, self._temp_at = 0.0, 0.0
+        self._wifi, self._wifi_at = None, 0.0
         self._status_key = None
         self._caption = ("", "user")
         self._caption_at = 0.0
@@ -347,10 +399,11 @@ class Face:
             self._update_targets(state, now)
             moving = self._tween()
             animated = state in ("speaking", "thinking", "listening", "looking") or self._blink_t >= 0
-            if moving or animated or last_frame != (state, self._emotion):
+            frame = (state, self._emotion, self._battery_level())
+            if moving or animated or last_frame != frame:
                 y0, y1 = self._draw(state, now)
                 await self._run_panel(self._panel.blit, self._canvas.buf, y0, y1)
-                last_frame = (state, self._emotion)
+                last_frame = frame
             await asyncio.sleep(0.05 if (moving or animated) else 0.2)
 
     def _update_targets(self, state: str, now: float) -> None:
@@ -414,12 +467,18 @@ class Face:
             return cut
         return None
 
+    def _battery_level(self) -> int:
+        battery = self._body.battery
+        return battery.level if battery and battery.ok else 0
+
     def _draw(self, state: str, now: float) -> tuple[int, int]:
         c, cur = self._canvas, self._cur
         y0, y1 = self._face_y
         c.clear_rows(y0, y1)
         hot = self._temp >= self._cfg["hot_c"]
         name = {"offline": "offline", "looking": "flash", "listening": "listen"}.get(state, "eye")
+        if name == "eye":
+            name = BATTERY_EYES[self._battery_level()]
         color = rgb(*COLORS["hot" if hot and state != "offline" else name])
         open_k = 1.0
         if self._blink_t >= 0:
@@ -451,16 +510,32 @@ class Face:
             except (OSError, ValueError):
                 pass
             self._temp_at = now
+        if now - self._wifi_at > 5:
+            self._wifi, self._wifi_at = wifi_dbm(), now
         online = self._body.connected_since is not None
-        level = "ok" if self._temp < 65 else "warn" if self._temp < self._cfg["hot_c"] else "bad"
-        key = (online, level)
+        dbm = self._wifi
+        bars = None if dbm is None else 3 if dbm >= -60 else 2 if dbm >= -70 else 1 if dbm >= -80 else 0
+        battery = self._body.battery
+        percent = battery.percent if battery and battery.ok else None
+        charge = self._battery_level()
+        key = (online, bars, battery is not None, percent, charge)
         if key == self._status_key:
             return
         self._status_key = key
         c = self._canvas
         c.clear_rows(8, 28)
-        c.circle(36, 18, 6, rgb(*COLORS["ok" if online else "bad"]))
-        c.circle(self._panel.w - 36, 18, 6, rgb(*COLORS[level]))
+        # Yesil: Gemini'ye bagli; sari: Wi-Fi var, Gemini yok; kirmizi carpi: Wi-Fi yok
+        icon = wifi_icon(bars, COLORS["bad" if bars is None else "ok" if online else "warn"])
+        for row in range(BATTERY_H):
+            i = (8 + row) * self._panel.w * 2 + WIFI_LEFT * 2
+            c.buf[i:i + WIFI_W * 2] = icon[row * WIFI_W * 2:(row + 1) * WIFI_W * 2]
+        if battery:
+            name = "offline" if percent is None else "ok" if charge == 0 else BATTERY_EYES[charge]
+            icon = battery_icon(percent, COLORS[name])
+            x = (self._panel.w - BATTERY_W - BATTERY_RIGHT) * 2
+            for row in range(BATTERY_H):
+                i = (8 + row) * self._panel.w * 2 + x
+                c.buf[i:i + BATTERY_W * 2] = icon[row * BATTERY_W * 2:(row + 1) * BATTERY_W * 2]
         await self._run_panel(self._panel.blit, c.buf, 8, 28)
 
     async def _draw_preview(self, now: float) -> bool:

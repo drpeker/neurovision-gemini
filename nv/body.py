@@ -31,7 +31,7 @@ THROTTLE_BITS = {
     0: "düşük voltaj", 1: "frekans sınırlı", 2: "kısıtlanıyor", 3: "yumuşak ısı sınırı",
     16: "düşük voltaj", 17: "frekans sınırlandı", 18: "kısıtlandı", 19: "yumuşak ısı sınırı",
 }
-SECTIONS = ["ozet", "guc", "isi", "cpu", "ram", "disk", "ag", "gpio", "i2c", "isik", "ses",
+SECTIONS = ["ozet", "batarya", "guc", "isi", "cpu", "ram", "disk", "ag", "gpio", "i2c", "isik", "ses",
             "motor", "gorus", "sistemler", "kota", "hepsi"]
 USAGE_LABELS = {"in_TEXT": "giriş_metin", "in_AUDIO": "giriş_ses", "in_IMAGE": "giriş_görüntü",
                 "in_VIDEO": "giriş_video", "out_AUDIO": "çıkış_ses", "out_TEXT": "çıkış_metin"}
@@ -108,6 +108,7 @@ class Body:
         self.radio = None  # LiveBrain.attach_radio
         self.motors = None  # LiveBrain.attach_motors
         self.tracker = None  # robot.py
+        self.battery = None  # robot.py: nv.power.Battery (INA219)
         self._pin_names = {int(k): v for k, v in self._cfg["pin_names"].items()}
         self._reserved = {int(k): v for k, v in self._cfg["reserved_pins"].items()}
 
@@ -211,6 +212,9 @@ class Body:
             out["radyo"] = self.radio.playing or "kapalı"
         return out
 
+    def _battery(self) -> dict:
+        return self.battery.status() if self.battery else {"durum": "batarya ölçümü yok"}
+
     def _motor(self) -> dict:
         return self.motors.status() if self.motors else {"durum": "motorlar bağlı değil"}
 
@@ -245,14 +249,14 @@ class Body:
     async def status(self, section: str = "ozet") -> dict:
         section = section if section in SECTIONS else "ozet"
         parts = {
-            "guc": self._power, "isi": self._temp, "cpu": self._cpu, "ram": self._ram,
+            "batarya": self._battery, "guc": self._power, "isi": self._temp, "cpu": self._cpu, "ram": self._ram,
             "disk": self._disk, "ag": self._net, "gpio": self._gpio, "i2c": self._i2c,
             "isik": self._light, "ses": self._sound, "motor": self._motor, "gorus": self._vision,
             "sistemler": self._systems,
             "kota": self._usage,
         }
         if section == "ozet":
-            wanted = ["guc", "isi", "cpu", "ram", "disk", "ag", "isik", "ses", "motor", "sistemler"]
+            wanted = ["batarya", "guc", "isi", "cpu", "ram", "disk", "ag", "isik", "ses", "motor", "sistemler"]
         elif section == "hepsi":
             wanted = list(parts)
         else:
@@ -271,6 +275,9 @@ class Body:
         t = s.get("isi", {}).get("işlemci_°C")
         if t and t >= self._cfg["warn_temp_c"]:
             w.append(f"işlemci sıcak: {t} °C")
+        charge = s.get("batarya", {}).get("oran_%")
+        if charge is not None and charge <= self._cfg["warn_battery_percent"]:
+            w.append(f"batarya düşük: %{charge}")
         power = s.get("guc", {})
         if "düşük voltaj" in power.get("şu_an", []):
             w.append("şu an düşük voltaj var")

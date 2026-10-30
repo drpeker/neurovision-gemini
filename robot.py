@@ -129,6 +129,7 @@ async def run(cfg: dict) -> None:
     motors = make_motors(cfg, brain, memory)
     tracker = make_tracker(cfg, camera, motors, brain, face)
     imu = await make_imu(cfg, motors, brain)
+    battery = make_battery(cfg, brain, memory)
 
     task = asyncio.create_task(brain.run(), name="brain")
     stop_target = []
@@ -138,6 +139,11 @@ async def run(cfg: dict) -> None:
         task.cancel()
 
     brain.attach_shutdown(on_shutdown)
+    power_watch = None
+    if battery:
+        from nv.power import watch
+        power_watch = asyncio.create_task(watch(battery, brain, cfg["battery"], lambda: on_shutdown("sistem")),
+                                          name="batarya-izle")
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, task.cancel)
@@ -153,6 +159,10 @@ async def run(cfg: dict) -> None:
             motors.close()  # once motorlar: her durumda dur
         if imu:
             imu.stop()
+        if power_watch:
+            power_watch.cancel()
+        if battery:
+            battery.stop()
         if radio:
             await radio.stop()
         mic.stop()
@@ -185,6 +195,24 @@ def make_tracker(cfg: dict, camera, motors, brain, face):
     tracker.face = face
     brain.attach_tracker(tracker)
     return tracker
+
+
+def make_battery(cfg: dict, brain, memory):
+    """INA219: batarya voltaji, akimi ve orani. Yoksa robot olcumsuz calisir."""
+    c = cfg.get("battery", {})
+    if not c.get("enabled"):
+        return None
+    from nv.power import Battery
+    try:
+        battery = Battery(c, int(memory.get("battery_capacity_mah") or 0))
+        battery.read()
+    except Exception as e:
+        log.warning("INA219 cevap vermedi, batarya olcumu kapali: %s", e)
+        return None
+    battery.start()
+    brain.body.battery = battery
+    log.info("batarya: %.2f V, %.3f A, %%%d", battery.volts, battery.amps, battery.percent)
+    return battery
 
 
 async def make_imu(cfg: dict, motors, brain):
