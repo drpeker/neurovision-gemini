@@ -68,6 +68,14 @@ class LiveBrain:
         if self._tools.tracker:
             self._tools.tracker.turner = turner
 
+    def attach_sonar(self, sonar, near_cm: float) -> None:
+        self._tools.sonar, self._tools.near_cm = sonar, near_cm
+        self.body.sonar = sonar
+
+    def attach_senses(self, senses) -> None:
+        self._tools.senses = senses
+        self.body.senses = senses
+
     def attach_tracker(self, tracker) -> None:
         self._tools.tracker = tracker
         self.body.tracker = tracker

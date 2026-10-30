@@ -17,7 +17,9 @@ log = logging.getLogger(__name__)
 
 ADDR = 0x68
 PWR_MGMT_1, CONFIG, GYRO_CONFIG, GYRO_ZOUT_H, WHO_AM_I = 0x6B, 0x1A, 0x1B, 0x47, 0x75
+ACCEL_CONFIG, ACCEL_XOUT_H = 0x1C, 0x3B
 LSB_PER_DPS = 131.0  # +-250 derece/sn araliginda
+LSB_PER_G = 4096.0  # +-8 g araliginda
 
 
 def wrap(degrees: float) -> float:
@@ -36,6 +38,8 @@ class Imu:
         self._bus.write_byte_data(ADDR, PWR_MGMT_1, 0x00)  # uyandir
         self._bus.write_byte_data(ADDR, CONFIG, 0x03)  # dahili filtre ~44 Hz: motor titresimi
         self._bus.write_byte_data(ADDR, GYRO_CONFIG, 0x00)  # +-250 derece/sn
+        self._bus.write_byte_data(ADDR, ACCEL_CONFIG, 0x10)  # +-8 g
+        self.senses = None  # robot.py: nv.senses.Senses, her ornegi alir
         self.bias = 0.0
         self.heading = 0.0  # derece, sola pozitif; acilistan beri
         self.rate = 0.0  # derece/sn
@@ -69,15 +73,20 @@ class Imu:
         last = time.monotonic()
         while self._running:
             try:
-                r = self._read() - self.bias
+                raw = self._bus.read_i2c_block_data(ADDR, ACCEL_XOUT_H, 14)
             except OSError:
                 time.sleep(0.01)  # I2C anlik hata: bir sonraki okumada devam
                 continue
+            ax, ay, az, _, gx, gy, gz = struct.unpack(">7h", bytes(raw))
+            r = self._gain * gz / LSB_PER_DPS - self.bias
             now = time.monotonic()
             with self._lock:
                 self.heading += r * (now - last)
                 self.rate = r
             self._history.append((now, self.heading))
+            if self.senses:
+                self.senses.feed(now, ax / LSB_PER_G, ay / LSB_PER_G, az / LSB_PER_G,
+                                 gx / LSB_PER_DPS, gy / LSB_PER_DPS)
             last = now
             time.sleep(0.004)
 

@@ -25,9 +25,9 @@ TURN_DPS = 60.0  # süreyle verilen dönüş <-> açı çevirisi (0.3 sn ~ 20 de
 # Hareket sınırı: mikrofon motor dönerken kapalı, "dur" duyulmaz. Model move'u döngüye sokunca robot
 # 81 sn durmadı (2026-10-30): kullanıcı konuşmadan MOVE_BUDGET_S, konuşsa da (gürültü de konuşma
 # sayılabilir) MOVE_WINDOW_S içinde MOVE_WINDOW_MAX_S saniyeden fazla hareket yok
-MOVE_BUDGET_S = 6.0
+MOVE_BUDGET_S = 15.0
 MOVE_WINDOW_S = 60.0
-MOVE_WINDOW_MAX_S = 20.0
+MOVE_WINDOW_MAX_S = 45.0
 INTERRUPTED = "Kullanıcı konuştuğu için hareketi yarıda kesip durdun. Söylediğini dinle, kendiliğinden devam etme."
 MOVE_REFUSED = ("Hareket sınırına ulaştın, durdun ve hareket yapılmadı. Yeniden move çağırma; "
                 "kullanıcıya kısaca söyle ve yeni komutunu bekle.")
@@ -86,13 +86,13 @@ DECLARATIONS = [
                     "geride seconds ver: 'hafifçe/biraz' kısa süre (0.3 sn). 'Yavaşça' speed=yavaş, "
                     "'çok yavaş' speed=çok yavaş demektir; ikisi birlikte de olabilir. Bir istek için tek "
                     "move çağır: araç hareket bitince döner, bitene kadar kullanıcıyı duyamazsın. "
-                    "Hedefe varmak için tekrar tekrar çağırma; kullanıcı konuşmadan en fazla 6 saniye "
-                    "hareket edebilirsin, sonrası reddedilir ve yeni komut beklersin.",
+                    "Hedefe varmak için tekrar tekrar çağırma: mesafeyi ölç, süreyi hesapla, tek hareketle "
+                    "git; kullanıcı konuşmadan en fazla 15 saniye hareket edebilirsin.",
         parameters_json_schema=_params({
             "direction": {"type": "string", "enum": ["ileri", "geri", "sol", "sag"],
                           "description": "sol/sag: yerinde dönüş"},
             "degrees": {"type": "number", "description": "sol/sag için dönüş açısı, 1 ile 720 arası derece"},
-            "seconds": {"type": "number", "description": "ileri/geri için 0.25 ile 6 arası saniye; hafifçe 0.3, normal 1"},
+            "seconds": {"type": "number", "description": "ileri/geri için 0.25 ile 15 arası saniye; hafifçe 0.3, normal 1"},
             "speed": {"type": "string", "enum": ["çok yavaş", "yavaş", "normal", "hızlı"]},
         }, ["direction"]),
     ),
@@ -157,6 +157,9 @@ class Tools:
         self.turner = None  # LiveBrain.attach_turner (nv.imu.AngleTurner, MPU6050)
         self._spent = 0.0  # son konuşmadan beri hareket süresi
         self.turn_only = False  # LiveBrain: ileri/geri kapalı (masada test)
+        self.senses = None  # LiveBrain.attach_senses
+        self.sonar = None  # LiveBrain.attach_sonar
+        self.near_cm = 0.0  # ileri giderken engel bundan yakinsa arac hemen doner
         self._interrupted = False  # kullanıcı hareket sırasında konuştu
         self._turn_task: asyncio.Task | None = None
         self._moves: collections.deque = collections.deque()  # (bitiş zamanı, süre)
@@ -173,6 +176,12 @@ class Tools:
                 "level": {"type": "integer", "description": "ayarla için 0-100 arası yüzde"},
             }, ["action"]),
         ))
+        if self.sonar:
+            decls.append(types.FunctionDeclaration(
+                name="distance",
+                description="Önündeki en yakın şeyin uzaklığını santimetre olarak ölç. Kullanıcıya "
+                            "yaklaşırken, engel sorulduğunda ya da ne kadar gideceğini hesaplarken kullan.",
+            ))
         if self._body.battery:
             decls.append(types.FunctionDeclaration(
                 name="battery_capacity",
@@ -217,9 +226,8 @@ class Tools:
             ))
             decls.append(types.FunctionDeclaration(
                 name="turn_to",
-                description="Az önce look ile gördüğün bir nesneye dön. Nesnenin görüntüdeki yatay "
-                            "konumunu ver: 0 en sol, 500 orta, 1000 en sağ. Takip listesinde olmayan "
-                            "nesneler için tek seferlik kullan.",
+                description="Az önce look ile gördüğün bir şeye dön. look sonucundaki x değerini ver: 0 en sol, "
+                            "500 orta, 1000 en sağ. Kişiye de nesneye de dönmek için tek seferlik kullan.",
                 parameters_json_schema=_params({
                     "x": {"type": "integer", "description": "0-1000 arası yatay konum"},
                 }, ["x"]),
@@ -260,7 +268,7 @@ class Tools:
                          "yapılmadı. Kısaca anlayamadığını söyle ve tekrar etmesini iste."})
         try:
             if call.name == "look":
-                return self._look(call)
+                return await self._look(call)
             if call.name == "body_status":
                 result = await self._body.status(args.get("section", "ozet"))
             elif call.name in ("weather", "wiki"):
@@ -339,6 +347,8 @@ class Tools:
             return {"error": MOVE_REFUSED}
         self._interrupted = False
         started = time.monotonic()
+        if self.senses:
+            self.senses.claimed = True
         try:
             if turning and self.turner:
                 # Jiroskopla; biten dönüş sonucu modele döner, sıradaki hareket bunu kesmez
@@ -348,22 +358,44 @@ class Tools:
                     return {"result": INTERRUPTED}
                 if self.turner.stalled:
                     return {"error": "Motorlara güç gitti ama robot dönmedi (sıkışma ya da düşük batarya)."}
-                return {"result": f"{direction} yönünde {degrees - abs(left):.0f} derece dönüldü. Hareket bitti."}
+                result = {"result": f"{direction} yönünde {degrees - abs(left):.0f} derece dönüldü. Hareket bitti."}
+                event = self.senses.take() if self.senses else None
+                return {**result, "olay": event} if event else result
             if turning and degrees and seconds is None:
                 seconds = abs(degrees) / TURN_DPS  # jiroskop yok: açı süreye çevrilir
             seconds = min(seconds or 1.0, budget)
             result = await self.motors.move(direction, seconds, speed)
             if "error" in result:
                 return result
+            peak = 0.0
+            battery = self._body.battery
+            sonar = self.sonar if direction == "ileri" else None
+            ahead = sonar.distance if sonar else None
+            warn = sonar and (ahead is None or ahead >= self.near_cm)  # zaten yakınsa model biliyor
             while self.motors.moving:
+                ahead = sonar.distance if sonar else None
+                if warn and ahead is not None and ahead < self.near_cm:
+                    return {"result": "İleri giderken önüne bir şey geldi; motor hâlâ çalışıyor, durmak "
+                                      "istiyorsan hemen stop çağır.", "olay": f"Önünde {ahead:.0f} cm'de engel var."}
+                peak = max(peak, battery.amps) if battery else 0.0
+                event = self.senses.take() if self.senses else None
+                if event:  # karar modelin: motor durmadı, durdurmak için stop
+                    return {"result": f"{direction} hareketi sürerken olay oldu; motor hâlâ çalışıyor, "
+                                      "durmak istiyorsan hemen stop çağır.", "olay": event}
                 await asyncio.sleep(0.02)
+            log.info("hareket bitti: %s %.1f sn, tepe akim %.2f A", direction, seconds, peak)
             if self._interrupted:
                 return {"result": INTERRUPTED}
-            return {"result": f"{direction} yönünde {seconds:.1f} saniye gidildi. Hareket bitti."}
+            result = {"result": f"{direction} yönünde {seconds:.1f} saniye gidildi. Hareket bitti."}
+            if self.sonar and self.sonar.distance is not None:
+                result["öndeki_mesafe_cm"] = round(self.sonar.distance)
+            return result
         except asyncio.CancelledError:
             await self.motors.stop(quiet=True)
             raise
         finally:
+            if self.senses:
+                self.senses.claimed = False
             self._spend(time.monotonic() - started)
 
     async def _turn(self, degrees: float) -> float | None:
@@ -421,6 +453,22 @@ class Tools:
         self._spend(time.monotonic() - started)
         return {"result": f"{'Sola' if e < 0 else 'Sağa'} döndüm; emin olmak için tekrar look ile bakabilirsin."}
 
+    async def _seen(self, jpeg: bytes) -> dict:
+        """Nesne tanıma ölçümü: görüntüdeki gözle tahminden kesin; turn_to bu x değerini alır."""
+        if not self.tracker:
+            return {}
+        found = await self.tracker.detect(jpeg)
+        return {"görülenler": [{"ad": d.name, "x": round(d.cx * 1000), "güven": round(d.conf, 2)} for d in found[:8]],
+                "not": "x: 0 en sol, 500 orta, 1000 en sağ."}
+
+    def _distance(self) -> dict:
+        if not self.sonar:
+            return {"error": "Mesafe sensörü yok."}
+        d = self.sonar.distance
+        if d is None:
+            return {"öndeki_mesafe_cm": None, "not": f"{self.sonar.max_cm} cm içinde yankı yok."}
+        return {"öndeki_mesafe_cm": round(d)}
+
     def _battery_capacity(self, action: str, mah: int | None = None) -> dict:
         battery = self._body.battery
         if not battery:
@@ -459,7 +507,7 @@ class Tools:
         self.face.set_emotion(emotion)
         return {"result": f"Yüzünde '{emotion}' ifadesi gösteriliyor."}
 
-    def _look(self, call: types.FunctionCall) -> types.FunctionResponse:
+    async def _look(self, call: types.FunctionCall) -> types.FunctionResponse:
         if self.face:
             self.face.flash()
         jpeg = self._camera.frame() if self._camera else None
@@ -470,7 +518,7 @@ class Tools:
                                           response={"error": "Kamera görüntüsü alınamadı."})
         return types.FunctionResponse(
             id=call.id, name=call.name,
-            response={"result": "Kameradan alınan güncel görüntü ekte."},
+            response={"result": "Kameradan alınan güncel görüntü ekte.", **await self._seen(jpeg)},
             parts=[types.FunctionResponsePart(
                 inline_data=types.FunctionResponseBlob(mime_type="image/jpeg", data=jpeg))],
         )

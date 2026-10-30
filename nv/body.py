@@ -31,7 +31,7 @@ THROTTLE_BITS = {
     0: "düşük voltaj", 1: "frekans sınırlı", 2: "kısıtlanıyor", 3: "yumuşak ısı sınırı",
     16: "düşük voltaj", 17: "frekans sınırlandı", 18: "kısıtlandı", 19: "yumuşak ısı sınırı",
 }
-SECTIONS = ["ozet", "batarya", "guc", "isi", "cpu", "ram", "disk", "ag", "gpio", "i2c", "isik", "ses",
+SECTIONS = ["ozet", "batarya", "denge", "mesafe", "guc", "isi", "cpu", "ram", "disk", "ag", "gpio", "i2c", "isik", "ses",
             "motor", "gorus", "sistemler", "kota", "hepsi"]
 USAGE_LABELS = {"in_TEXT": "giriş_metin", "in_AUDIO": "giriş_ses", "in_IMAGE": "giriş_görüntü",
                 "in_VIDEO": "giriş_video", "out_AUDIO": "çıkış_ses", "out_TEXT": "çıkış_metin"}
@@ -109,6 +109,8 @@ class Body:
         self.motors = None  # LiveBrain.attach_motors
         self.tracker = None  # robot.py
         self.battery = None  # robot.py: nv.power.Battery (INA219)
+        self.senses = None  # LiveBrain.attach_senses
+        self.sonar = None  # LiveBrain.attach_sonar
         self._pin_names = {int(k): v for k, v in self._cfg["pin_names"].items()}
         self._reserved = {int(k): v for k, v in self._cfg["reserved_pins"].items()}
 
@@ -212,6 +214,15 @@ class Body:
             out["radyo"] = self.radio.playing or "kapalı"
         return out
 
+    def _front(self) -> dict:
+        if not self.sonar:
+            return {"durum": "mesafe sensörü yok"}
+        d = self.sonar.distance
+        return {"öndeki_mesafe_cm": None if d is None else round(d)}
+
+    def _balance(self) -> dict:
+        return self.senses.status() if self.senses else {"durum": "denge algısı yok"}
+
     def _battery(self) -> dict:
         return self.battery.status() if self.battery else {"durum": "batarya ölçümü yok"}
 
@@ -249,14 +260,15 @@ class Body:
     async def status(self, section: str = "ozet") -> dict:
         section = section if section in SECTIONS else "ozet"
         parts = {
-            "batarya": self._battery, "guc": self._power, "isi": self._temp, "cpu": self._cpu, "ram": self._ram,
+            "batarya": self._battery, "denge": self._balance, "mesafe": self._front,
+            "guc": self._power, "isi": self._temp, "cpu": self._cpu, "ram": self._ram,
             "disk": self._disk, "ag": self._net, "gpio": self._gpio, "i2c": self._i2c,
             "isik": self._light, "ses": self._sound, "motor": self._motor, "gorus": self._vision,
             "sistemler": self._systems,
             "kota": self._usage,
         }
         if section == "ozet":
-            wanted = ["batarya", "guc", "isi", "cpu", "ram", "disk", "ag", "isik", "ses", "motor", "sistemler"]
+            wanted = ["batarya", "denge", "mesafe", "guc", "isi", "cpu", "ram", "disk", "ag", "isik", "ses", "motor", "sistemler"]
         elif section == "hepsi":
             wanted = list(parts)
         else:

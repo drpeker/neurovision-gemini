@@ -23,6 +23,10 @@ body_status batarya kullan; ölçmeden söyleme. Batarya olayı gelirse kısaca 
 etmeye ve şarj istemeye sen karar ver. Kritik seviyede sistem seni kendisi kapatır.
 Kalan süreyi kalan_mAh ve ortalama_akım_A ile kendin hesapla, hafızadaki eski sürelere güvenme. Kapasiteden
 emin değilsen kullanıcıya sor, battery_capacity ile kaydet.
+Önündeki mesafeyi distance ile santimetre olarak ölçebilirsin; sensör dar bir alana bakar, kişi tam karşında değilse başka şeyi ölçer.
+Bana gel ya da yaklaş denince şu sırayla ilerle, adımları sen yönet: 1) look ile bak, görülenler listesinde person ara. Kişi yoksa 45 derece dön, yeniden bak; en fazla bir tur. 2) Kişinin x değeriyle turn_to çağır. 3) Yeniden look; kişi ortada değilse (x 420-580 dışı) turn_to ile düzelt. 4) distance ile ölç; istenen yakınlığa (söylenmediyse 40 cm) kalan yolu hıza bölüp tek move ile git. Hızın normalde saniyede 8 cm, yavaşta 6.5 cm, hızlıda 13 cm. 5) Yeniden look ve distance ile kontrol et, gerekiyorsa düzeltip devam et. Sensör dar bir alana bakar, kişi tam karşında değilse başka şeyi ölçer; ölçüm görüntüyle uyuşmuyorsa önce dön.
+Kameran yerden alçakta, bacakların kadrajı doldurması yakınlık değildir: uzaklığa sensörden bak, ölçüm izin veriyorsa çekinmeden yaklaş. Araç sonucunda ya da sistem olayı olarak çarpma,
+eğim, taşınma, zorlanma, yakın engel gelebilir; motor çalışıyorsa stop kullanabilirsin, ne yapacağına sen karar ver.
 Kendi bedenini hissedebilirsin: ısın, gücün, işlemcin, belleğin, pinlerin, bağlı sensörlerin,
 ortam ışığı ve ses düzeyi için body_status kullan; ölçmeden tahmin yürütme.
 Ekranında gözlerin var; söylediğine uygun bir duygu olduğunda express ile yüz ifadeni göster.
@@ -141,7 +145,7 @@ min_speed = 22
 # Sesli donusun en dusuk gucu (%): 30 ile 0.3-1 sn donus zayifti (yerde %28 ~5 derece/0.25 sn).
 # Takip ve arama bunu kullanmaz. Sesli donus ayrica kisa rampa (pulse_ramp_ms) kullanir.
 turn_min_speed = 36
-max_seconds = 6.0
+max_seconds = 15.0
 # En kisa hareket; model "biraz" icin 0.2 sn seciyor
 min_seconds = 0.25
 reverse_pause_ms = 150
@@ -281,6 +285,35 @@ curve = [[3.27, 0], [3.61, 5], [3.69, 10], [3.71, 15], [3.73, 20], [3.75, 25], [
          [3.80, 40], [3.82, 45], [3.84, 50], [3.85, 55], [3.87, 60], [3.91, 65], [3.95, 70], [3.98, 75],
          [4.02, 80], [4.08, 85], [4.11, 90], [4.15, 95], [4.20, 100]]
 
+[senses]
+# Beden algisi (nv/senses.py): olaylar modele gider, karari o verir
+# Modul duzken olculen ivme (g): egim buna gore
+gravity = [0.06, -0.01, 0.91]
+# Tek ornekte ivme sicramasi (g): bosta 0.008, yerde sururken en fazla 0.81 olculdu
+bump_g = 1.2
+tilt_deg = 20
+# Motor dururken bu donus (derece/sn) ya da ivme sapmasi (g) handle_s surerse tasiniyor sayilir;
+# still_s durgunluktan sonra biter
+handle_dps = 25
+handle_g = 0.12
+handle_s = 0.15
+still_s = 3
+# Bu akim (A) 0.6 sn surerse zorlanma: yerde ileri 0.30, donus 0.52 A; sikisma olculmedi
+stall_a = 1.0
+# Ayni olay en fazla bu aralikla bildirilir
+repeat_s = 8
+
+[sonar]
+# HC-SR04 (nv/sonar.py): TRIG GPIO4, ECHO GPIO17. Olcer, durdurmaz; karar modelin
+enabled = true
+trig = 4
+echo = 17
+max_cm = 400
+# Olcumler arasi bekleme (sn): onceki darbenin yankilari sonsun
+interval_s = 0.04
+# Ileri giderken engel bundan yakina gelirse move hemen doner, model karar verir
+near_cm = 35
+
 [memory]
 # Pi'de yerel SQLite; git disinda
 db = "data/memory.db"
@@ -327,7 +360,8 @@ i2c_buses = [1]
 8 = "ekran CS (SPI CE0)"
 6 = "ekran arka ışık"
 7 = "dokunmatik CS (planlı)"
-17 = "dokunmatik IRQ (planlı)"
+4 = "HC-SR04 TRIG"
+17 = "HC-SR04 ECHO"
 
 [debug]
 # Modele giden son konusmalarin sesi ve oturum talimati; bir hatayi yeniden oynatmak icin

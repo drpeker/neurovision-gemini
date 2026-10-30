@@ -130,6 +130,8 @@ async def run(cfg: dict) -> None:
     tracker = make_tracker(cfg, camera, motors, brain, face)
     imu = await make_imu(cfg, motors, brain)
     battery = make_battery(cfg, brain, memory)
+    senses = make_senses(cfg, imu, motors, battery, brain)
+    sonar = make_sonar(cfg, brain)
 
     task = asyncio.create_task(brain.run(), name="brain")
     stop_target = []
@@ -159,6 +161,10 @@ async def run(cfg: dict) -> None:
             motors.close()  # once motorlar: her durumda dur
         if imu:
             imu.stop()
+        if senses:
+            senses.stop()
+        if sonar:
+            sonar.stop()
         if power_watch:
             power_watch.cancel()
         if battery:
@@ -195,6 +201,35 @@ def make_tracker(cfg: dict, camera, motors, brain, face):
     tracker.face = face
     brain.attach_tracker(tracker)
     return tracker
+
+
+def make_sonar(cfg: dict, brain):
+    """HC-SR04: model mesafeyi olcer; robot kendiliginden durmaz, karar modelin."""
+    c = cfg.get("sonar", {})
+    if not c.get("enabled"):
+        return None
+    from nv.sonar import Sonar
+    try:
+        sonar = Sonar(c)
+    except Exception as e:
+        log.warning("mesafe sensoru acilamadi, olcumsuz devam: %s", e)
+        return None
+    sonar.start()
+    brain.attach_sonar(sonar, c["near_cm"])
+    log.info("mesafe sensoru hazir: TRIG GPIO%d, ECHO GPIO%d", c["trig"], c["echo"])
+    return sonar
+
+
+def make_senses(cfg: dict, imu, motors, battery, brain):
+    """Carpma, egim, tasinma, zorlanma: MPU6050 varsa."""
+    if not imu:
+        return None
+    from nv.senses import Senses
+    senses = Senses(cfg["senses"], motors, battery)
+    imu.senses = senses
+    brain.attach_senses(senses)
+    senses.start(brain.notify)
+    return senses
 
 
 def make_battery(cfg: dict, brain, memory):

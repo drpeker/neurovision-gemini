@@ -66,6 +66,10 @@ class Tracker:
         return {"result": f"{self._label()} takibi başladı ({seconds:.0f} sn). Bulunca ya da "
                           "kaybedince sana kısa bir bildirim gelecek; o zamana kadar konuşma."}
 
+    async def detect(self, jpeg: bytes) -> list[Detection]:
+        """Tek kare tanima; takip disinda da kullanilir (look)."""
+        return await self._detector.detect(jpeg)
+
     async def stop(self) -> dict:
         was = self.target if self.active else None
         if self.active:
