@@ -277,7 +277,7 @@ shunt_ohm = 0.1
 cells = 3
 poll_s = 0.25
 # Pilin kapasitesi; harcanan akim bundan dusulur
-capacity_mah = 2500
+capacity_mah = 2600
 # Bostayken oran bu surede voltaja yaklasir; bu voltajda bostayken pil dolu sayilir
 blend_s = 3600
 full_v = 12.45
@@ -290,7 +290,7 @@ level_bands = [35, 20, 10]
 # Voltaj bunun altinda critical_hold_s sn kalirsa veda edip Pi kapanir (3.5 V/hucre)
 critical_v = 10.5
 critical_hold_s = 30
-# Hucre basina dinlenme voltaji -> oran: LiPo tablosu, bu pil icin olculmedi
+# Hucre basina dinlenme voltaji -> oran: 3S 2600 mAh LiPo, tablo bu pil icin olculmedi
 curve = [[3.27, 0], [3.61, 5], [3.69, 10], [3.71, 15], [3.73, 20], [3.75, 25], [3.77, 30], [3.79, 35],
          [3.80, 40], [3.82, 45], [3.84, 50], [3.85, 55], [3.87, 60], [3.91, 65], [3.95, 70], [3.98, 75],
          [4.02, 80], [4.08, 85], [4.11, 90], [4.15, 95], [4.20, 100]]
